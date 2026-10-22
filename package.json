@@ -1,0 +1,17 @@
+{
+  "name": "sfe-prototype",
+  "version": "1.0.0",
+  "description": "sfe prototype: vetted volunteer protectors reachable by voice",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "express": "^5.3.0",
+    "ws": "^8.22.0"
+  }
+}

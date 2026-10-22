@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f766e">
+<title>sfe</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%230f766e%27/%3E%3Ctext x=%2716%27 y=%2722%27 font-size=%2716%27 font-weight=%27700%27 text-anchor=%27middle%27 fill=%27white%27 font-family=%27sans-serif%27%3Es%3C/text%3E%3C/svg%3E">
+<style>
+:root{--bg:#f6f7f8;--card:#fff;--ink:#14181f;--mute:#5b6572;--line:#dfe3e8;--brand:#0f766e;--brand-ink:#fff;--sos:#c2410c;--danger:#b91c1c;--ok:#15803d;--warn:#b45309}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1317;--card:#171c22;--ink:#eef1f4;--mute:#9aa6b2;--line:#2a323b;--brand:#2dd4bf;--brand-ink:#04211e;--sos:#fb923c;--danger:#f87171;--ok:#4ade80;--warn:#fbbf24}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;min-height:100vh}
+#app{max-width:560px;margin:0 auto;padding:16px 16px 96px}
+header{display:flex;align-items:center;justify-content:space-between;margin:4px 0 16px}
+.logo{font-weight:800;font-size:26px;letter-spacing:-.5px;color:var(--brand)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:0 0 14px}
+h1{font-size:22px;margin:0 0 6px}h2{font-size:17px;margin:0 0 8px}
+p{margin:0 0 10px}.mute{color:var(--mute)}.small{font-size:13.5px}
+label{display:block;font-weight:600;margin:12px 0 4px}
+input,textarea,select{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:11px 12px}
+textarea{min-height:76px;resize:vertical}
+button,.btn{font:inherit;font-weight:650;border:0;border-radius:12px;padding:13px 16px;cursor:pointer;background:var(--brand);color:var(--brand-ink);text-decoration:none;display:inline-block;text-align:center}
+button.ghost,.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+button.danger{background:var(--danger);color:#fff}
+.btn.e112{background:var(--danger);color:#fff}
+button.small,.btn.small{padding:8px 12px;font-size:14px;border-radius:9px}
+button:disabled{opacity:.5;cursor:not-allowed}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.row>*{flex:1}.row .auto{flex:0 0 auto}
+.sos{width:100%;aspect-ratio:1/1;max-width:300px;margin:8px auto;display:block;border-radius:50%;background:var(--sos);color:#fff;font-size:34px;font-weight:800;letter-spacing:1px;box-shadow:0 8px 30px #c2410c55;line-height:1.15}
+.sos small{display:block;font-size:14px;font-weight:600;opacity:.9;margin-top:6px}
+.pill{display:inline-block;border-radius:999px;padding:3px 10px;font-size:13px;font-weight:650;border:1px solid var(--line)}
+.pill.ok{color:var(--ok);border-color:var(--ok)}.pill.warn{color:var(--warn);border-color:var(--warn)}.pill.bad{color:var(--danger);border-color:var(--danger)}
+.banner{border-radius:12px;padding:12px 14px;margin:0 0 14px;font-weight:600}
+.banner.info{background:color-mix(in srgb,var(--brand) 14%,transparent)}
+.banner.bad{background:color-mix(in srgb,var(--danger) 16%,transparent);color:var(--ink)}
+.big{font-size:44px;font-weight:800;text-align:center;margin:6px 0}
+.center{text-align:center}
+.err{color:var(--danger);font-weight:600;margin:8px 0}
+.tabs{display:flex;gap:6px;margin:0 0 14px;flex-wrap:wrap}.tabs button{flex:0 0 auto;padding:8px 14px}
+.stars button{flex:1;padding:12px 0;font-size:20px}
+.sticky{position:fixed;left:0;right:0;bottom:0;padding:12px 16px calc(12px + env(safe-area-inset-bottom));background:var(--bg);border-top:1px solid var(--line)}
+.sticky .in{max-width:560px;margin:0 auto}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;padding:6px 4px;border-bottom:1px solid var(--line);vertical-align:top}
+.check{display:flex;gap:8px;align-items:center;margin:4px 0;font-weight:500}.check input{width:auto}
+.stat{display:inline-block;min-width:44%;margin:4px 0}.stat b{font-size:22px;display:block}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<audio id="remote" autoplay playsinline></audio>
+<script>
+'use strict';
+/* ---------- tiny helpers ---------- */
+const $app = document.getElementById('app');
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} },
+};
+const S = {
+  token: store.get('sfe_token'), user: null, config: { iceServers: [], answerSeconds: 30 }, ws: null, wsRetry: 0,
+  online: 0, authMode: 'login', authRole: 'caller', error: '', tab: 'apps', admin: {}, incoming: [], call: null,
+  shareLoc: true, note: '', pc: null, stream: null, muted: false, queued: [], watchId: null, lastLocPost: 0, tick: null, beep: null, loading: true,
+};
+
+async function api(path, method, body) {
+  const r = await fetch('/api' + path, {
+    method: method || (body ? 'POST' : 'GET'),
+    headers: { 'Content-Type': 'application/json', ...(S.token ? { Authorization: 'Bearer ' + S.token } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(j.error || 'Something went wrong'); e.status = r.status; throw e; }
+  return j;
+}
+
+/* ---------- sound / vibration for incoming alerts ---------- */
+let actx = null;
+function unlockAudio() { try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); } catch {} }
+function startBeep() {
+  stopBeep();
+  const once = () => {
+    try {
+      if (!actx) return;
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.frequency.value = 880; g.gain.value = 0.15; o.connect(g); g.connect(actx.destination);
+      o.start(); o.stop(actx.currentTime + 0.25);
+    } catch {}
+    try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch {}
+  };
+  once(); S.beep = setInterval(once, 1500);
+}
+function stopBeep() { clearInterval(S.beep); S.beep = null; }
+
+/* ---------- websocket ---------- */
+function connectWS() {
+  if (!S.token) return;
+  if (S.ws && S.ws.readyState <= 1) return;
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws?token=' + S.token);
+  S.ws = ws;
+  ws.onopen = () => { S.wsRetry = 0; };
+  ws.onmessage = (e) => onWS(JSON.parse(e.data));
+  ws.onclose = (e) => {
+    if (S.ws !== ws) return;
+    S.ws = null;
+    if (!S.token || e.code === 4001) return;
+    setTimeout(connectWS, Math.min(8000, 800 * ++S.wsRetry));
+  };
+}
+function wsSend(o) { if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(o)); }
+
+function onWS(m) {
+  if (m.type === 'alert') {
+    if (S.call || S.incoming.find((x) => x.alertId === m.alertId)) return;
+    S.incoming.push({ ...m, expires: Date.now() + m.secondsLeft * 1000 });
+    startBeep(); render();
+  } else if (m.type === 'taken') {
+    S.incoming = S.incoming.filter((x) => x.alertId !== m.alertId);
+    if (!S.incoming.length) stopBeep();
+    render();
+  } else if (m.type === 'accepted' && S.call && S.call.alertId === m.alertId) {
+    S.call.phase = 'active'; S.call.peer = m.protector; S.call.startedAt = Date.now();
+    startCaller(); render();
+  } else if (m.type === 'unanswered' && S.call && S.call.alertId === m.alertId) {
+    S.call.phase = 'unanswered'; S.call.reason = m.reason; cleanupMedia(); render();
+  } else if (m.type === 'ended' && S.call && S.call.alertId === m.alertId) {
+    endLocal('The other person ended the call.');
+  } else if (m.type === 'location' && S.call && S.call.alertId === m.alertId) {
+    S.call.location = m.location; render();
+  } else if (m.type === 'escalated' && S.call && S.call.alertId === m.alertId) {
+    S.call.escalated = true; render();
+  } else if (m.type === 'signal' && S.call && S.call.alertId === m.alertId) {
+    onSignal(m.data);
+  }
+}
+
+/* ---------- WebRTC (voice) ---------- */
+async function getMic() {
+  if (S.stream) return S.stream;
+  try { S.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+  catch { S.stream = null; }
+  return S.stream;
+}
+function makePC() {
+  if (S.pc) return S.pc;
+  const pc = new RTCPeerConnection({ iceServers: S.config.iceServers });
+  pc.onicecandidate = (e) => { if (e.candidate && S.call) wsSend({ type: 'signal', alertId: S.call.alertId, data: { candidate: e.candidate } }); };
+  pc.ontrack = (e) => { const a = document.getElementById('remote'); a.srcObject = e.streams[0]; a.play().catch(() => {}); };
+  pc.onconnectionstatechange = () => { if (S.call) { S.call.conn = pc.connectionState; render(); } };
+  if (S.stream) S.stream.getTracks().forEach((t) => pc.addTrack(t, S.stream));
+  S.pc = pc;
+  return pc;
+}
+async function startCaller() {
+  await getMic();
+  const pc = makePC();
+  if (!S.stream) { S.call.noMic = true; render(); }
+  const offer = await pc.createOffer({ offerToReceiveAudio: true });
+  await pc.setLocalDescription(offer);
+  wsSend({ type: 'signal', alertId: S.call.alertId, data: { sdp: pc.localDescription } });
+}
+async function onSignal(d) {
+  try {
+    if (d.sdp && d.sdp.type === 'offer') {
+      await getMic();
+      const pc = makePC();
+      await pc.setRemoteDescription(d.sdp);
+      for (const c of S.queued.splice(0)) await pc.addIceCandidate(c).catch(() => {});
+      const ans = await pc.createAnswer();
+      await pc.setLocalDescription(ans);
+      wsSend({ type: 'signal', alertId: S.call.alertId, data: { sdp: pc.localDescription } });
+    } else if (d.sdp && d.sdp.type === 'answer' && S.pc) {
+      await S.pc.setRemoteDescription(d.sdp);
+      for (const c of S.queued.splice(0)) await S.pc.addIceCandidate(c).catch(() => {});
+    } else if (d.candidate) {
+      if (S.pc && S.pc.remoteDescription) await S.pc.addIceCandidate(d.candidate).catch(() => {});
+      else S.queued.push(d.candidate);
+    }
+  } catch (e) { console.warn('signal error', e); }
+}
+function cleanupMedia() {
+  if (S.pc) { try { S.pc.close(); } catch {} S.pc = null; }
+  if (S.stream) { S.stream.getTracks().forEach((t) => t.stop()); S.stream = null; }
+  S.queued = []; S.muted = false;
+  if (S.watchId != null) { navigator.geolocation.clearWatch(S.watchId); S.watchId = null; }
+  const a = document.getElementById('remote'); a.srcObject = null;
+}
+function endLocal(msg) { cleanupMedia(); if (S.call) { S.call.phase = 'after'; S.call.msg = msg || ''; } render(); }
+
+/* ---------- location (caller) ---------- */
+function startLocation(alertId) {
+  if (!S.shareLoc || !navigator.geolocation) return;
+  S.watchId = navigator.geolocation.watchPosition((p) => {
+    const loc = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy };
+    if (S.call) S.call.myLocation = loc;
+    if (Date.now() - S.lastLocPost > 8000) { S.lastLocPost = Date.now(); api('/alerts/' + alertId + '/location', 'POST', loc).catch(() => {}); }
+  }, () => { if (S.call) { S.call.locDenied = true; render(); } }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
+}
+function getPositionOnce() {
+  return new Promise((resolve) => {
+    if (!S.shareLoc || !navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy }),
+      () => resolve(null), { enableHighAccuracy: true, timeout: 4000, maximumAge: 15000 });
+  });
+}
+
+/* ---------- actions ---------- */
+const actions = {
+  async switchAuth(el) { S.authMode = el.dataset.mode; S.error = ''; render(); },
+  async setRole(el) { S.authRole = el.dataset.role; render(); },
+  async submitAuth() {
+    const v = (id) => (document.getElementById(id) || {}).value || '';
+    S.error = '';
+    try {
+      const body = S.authMode === 'login'
+        ? { email: v('email'), password: v('password') }
+        : { name: v('name'), email: v('email'), password: v('password'), role: S.authRole, languages: v('languages'), country: v('country'), bio: v('bio') };
+      const r = await api(S.authMode === 'login' ? '/login' : '/signup', 'POST', body);
+      S.token = r.token; store.set('sfe_token', r.token); await boot();
+    } catch (e) { S.error = e.message; render(); }
+  },
+  async logout() {
+    try { await api('/logout', 'POST'); } catch {}
+    cleanupMedia(); stopBeep(); if (S.ws) S.ws.close();
+    S.token = null; S.user = null; S.call = null; S.incoming = []; store.set('sfe_token', null); render();
+  },
+  async toggleLoc(el) { S.shareLoc = el.checked; },
+  async sos() {
+    unlockAudio(); S.error = '';
+    S.note = (document.getElementById('note') || {}).value || '';
+    await getMic();                               // ask for the microphone on this tap
+    const loc = await getPositionOnce();
+    try {
+      const r = await api('/alerts', 'POST', { note: S.note, location: loc });
+      S.call = { alertId: r.alertId, role: 'caller', phase: r.status === 'ringing' ? 'ringing' : 'unanswered', reason: r.reason, ringing: r.ringing, startedAt: Date.now() };
+      if (S.call.phase === 'ringing') startLocation(r.alertId);
+    } catch (e) { S.error = e.message; }
+    render();
+  },
+  async cancelAlert() { try { await api('/alerts/' + S.call.alertId + '/end', 'POST'); } catch {} cleanupMedia(); S.call = null; render(); },
+  async call112() { if (S.call && S.call.role === 'caller') { S.call.escalated = true; api('/alerts/' + S.call.alertId + '/escalate', 'POST').catch(() => {}); } },
+  async endCall() {
+    try { await api('/alerts/' + S.call.alertId + '/end', 'POST'); } catch {}
+    endLocal('');
+  },
+  async mute() { S.muted = !S.muted; if (S.stream) S.stream.getAudioTracks().forEach((t) => (t.enabled = !S.muted)); render(); },
+  async rate(el) { try { await api('/alerts/' + S.call.alertId + '/rate', 'POST', { stars: +el.dataset.n }); S.call.rated = +el.dataset.n; } catch (e) { S.error = e.message; } render(); },
+  async report() {
+    const reason = (document.getElementById('reason') || {}).value || '';
+    try { await api('/alerts/' + S.call.alertId + '/report', 'POST', { reason }); S.call.reported = true; S.error = ''; } catch (e) { S.error = e.message; }
+    render();
+  },
+  async done() { S.call = null; S.error = ''; await refreshMe(); render(); },
+  async toggleAvail(el) {
+    unlockAudio();
+    try { const r = await api('/protector/available', 'POST', { available: el.checked }); S.user.available = r.available; S.error = ''; }
+    catch (e) { S.error = e.message; }
+    render();
+  },
+  async accept(el) {
+    unlockAudio(); stopBeep();
+    const alertId = el.dataset.id;
+    try {
+      const r = await api('/alerts/' + alertId + '/accept', 'POST');
+      S.incoming = [];
+      S.call = { alertId, role: 'protector', phase: 'active', peer: r.caller, note: r.note, location: r.location, startedAt: Date.now() };
+      await getMic(); makePC();                   // ready for the caller's offer
+      if (!S.stream) S.call.noMic = true;
+    } catch (e) { S.incoming = S.incoming.filter((x) => x.alertId !== alertId); S.error = e.message; if (!S.incoming.length) stopBeep(); }
+    render();
+  },
+  async decline(el) {
+    S.incoming = S.incoming.filter((x) => x.alertId !== el.dataset.id);
+    api('/alerts/' + el.dataset.id + '/decline', 'POST').catch(() => {});
+    if (!S.incoming.length) stopBeep(); render();
+  },
+  /* admin */
+  async tab(el) { S.tab = el.dataset.tab; await loadAdmin(); render(); },
+  async check(el) { await api('/admin/users/' + el.dataset.id + '/checks', 'POST', { [el.dataset.k]: el.checked }); await loadAdmin(); render(); },
+  async adminAct(el) {
+    try { await api('/admin/users/' + el.dataset.id + '/' + el.dataset.act, 'POST'); S.error = ''; } catch (e) { S.error = e.message; }
+    await loadAdmin(); render();
+  },
+  async resolve(el) { await api('/admin/reports/' + el.dataset.id + '/resolve', 'POST'); await loadAdmin(); render(); },
+};
+$app.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-action]');
+  if (!el || el.tagName === 'INPUT') return;
+  const fn = actions[el.dataset.action];
+  if (fn) fn(el);
+});
+$app.addEventListener('change', (e) => {
+  const el = e.target.closest('input[data-action]');
+  if (el && actions[el.dataset.action]) actions[el.dataset.action](el);
+});
+
+/* ---------- data loading ---------- */
+async function refreshMe() {
+  const r = await api('/me');
+  S.user = r.user; S.online = r.protectorsOnline;
+  if (r.activeAlert && !S.call) S.call = { alertId: r.activeAlert.id, role: r.activeAlert.role, phase: 'stale' };
+}
+async function loadAdmin() {
+  if (S.tab === 'apps' || S.tab === 'people') S.admin.users = await api('/admin/users?role=protector');
+  if (S.tab === 'reports') S.admin.reports = await api('/admin/reports');
+  S.admin.stats = await api('/admin/stats');
+}
+async function boot() {
+  S.loading = true; render();
+  try { S.config = await api('/config'); } catch {}
+  if (S.token) {
+    try { await refreshMe(); connectWS(); if (S.user.role === 'admin') await loadAdmin(); }
+    catch (e) { S.token = null; store.set('sfe_token', null); S.user = null; }
+  }
+  S.loading = false; render();
+}
+
+/* ---------- views ---------- */
+const fmtTime = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+const mapLink = (l) => l ? `<a class="btn ghost small" target="_blank" rel="noopener noreferrer" href="https://www.openstreetmap.org/?mlat=${+l.lat}&mlon=${+l.lng}#map=17/${+l.lat}/${+l.lng}">Open caller location</a>` : '';
+
+function header() {
+  return `<header><div class="logo">sfe</div>${S.user ? `<div class="row auto"><span class="mute small">${esc(S.user.name)}</span><button class="ghost small auto" data-action="logout">Log out</button></div>` : ''}</header>`;
+}
+const notice112 = `<p class="small mute">sfe supports 112. It does not replace it. In an emergency, call 112 first.</p>`;
+
+function authView() {
+  const login = S.authMode === 'login', prot = S.authRole === 'protector';
+  return header() + `
+  <div class="card">
+    <h1>${login ? 'Welcome back' : 'Create your account'}</h1>
+    <p class="mute">A calm voice from a vetted person, whenever you feel unsafe.</p>
+    ${!login ? `<div class="row" style="margin:10px 0"><button class="${prot ? 'ghost' : ''}" data-action="setRole" data-role="caller">I need support</button><button class="${prot ? '' : 'ghost'}" data-action="setRole" data-role="protector">I want to be a protector</button></div>` : ''}
+    ${!login ? `<label for="name">Your name</label><input id="name" autocomplete="name">` : ''}
+    <label for="email">Email</label><input id="email" type="email" autocomplete="email">
+    <label for="password">Password ${login ? '' : '(8+ characters)'}</label><input id="password" type="password" autocomplete="${login ? 'current-password' : 'new-password'}">
+    ${!login && prot ? `<label for="country">Country</label><input id="country"><label for="languages">Languages you speak</label><input id="languages" placeholder="e.g. Spanish, English, German"><label for="bio">Why do you want to help? Any relevant training?</label><textarea id="bio"></textarea><p class="small mute">New protectors are vetted before they can take calls: ID check, criminal-record certificate, references and a short training.</p>` : ''}
+    ${S.error ? `<div class="err">${esc(S.error)}</div>` : ''}
+    <div style="margin-top:14px"><button style="width:100%" data-action="submitAuth">${login ? 'Log in' : 'Sign up'}</button></div>
+    <p class="center small" style="margin-top:12px">${login ? `New here? <a href="#" data-action="switchAuth" data-mode="signup">Create an account</a>` : `Have an account? <a href="#" data-action="switchAuth" data-mode="login">Log in</a>`}</p>
+  </div>${notice112}`;
+}
+
+function callerHome() {
+  return header() + `
+  <div class="card center">
+    <h1>Feeling unsafe?</h1>
+    <p class="mute">Tap to ring vetted protectors. The first to answer talks with you by voice.</p>
+    <button class="sos" data-action="sos">SOS<small>${S.online ? S.online + ' protector' + (S.online > 1 ? 's' : '') + ' online' : 'no protectors online'}</small></button>
+    ${S.error ? `<div class="err">${esc(S.error)}</div>` : ''}
+    <label for="note" style="text-align:left">Optional: tell them briefly what is happening</label>
+    <textarea id="note" maxlength="200">${esc(S.note)}</textarea>
+    <label class="check"><input type="checkbox" data-action="toggleLoc" ${S.shareLoc ? 'checked' : ''}> Share my location with the protector</label>
+  </div>
+  ${notice112}
+  <div class="sticky"><div class="in"><a class="btn e112" style="width:100%" href="tel:112">In danger or need medical help? Call 112</a></div></div>`;
+}
+
+function callView() {
+  const c = S.call;
+  const e112 = `<a class="btn e112" style="width:100%" href="tel:112" data-action="call112">Call 112</a>`;
+  if (c.phase === 'stale') {
+    return header() + `<div class="card"><h2>You have a call open</h2><p class="mute">The call was interrupted. You can end it here.</p><button data-action="endCall" class="danger" style="width:100%">End call</button></div>`;
+  }
+  if (c.role === 'caller') {
+    if (c.phase === 'ringing') {
+      const left = Math.max(0, S.config.answerSeconds - Math.floor((Date.now() - c.startedAt) / 1000));
+      return header() + `<div class="card center"><h1>Ringing protectors…</h1><div class="big" id="timer">${left}s</div><p class="mute">${c.ringing} protector${c.ringing > 1 ? 's' : ''} alerted. If nobody answers you will be told straight away.</p><button class="ghost" data-action="cancelAlert">Cancel</button></div><div class="sticky"><div class="in">${e112}</div></div>`;
+    }
+    if (c.phase === 'unanswered') {
+      return header() + `<div class="banner bad">${c.reason === 'no_protectors_online' ? 'No protectors are online right now.' : 'Nobody could answer in time.'} Please call 112 now if you need help.</div><div class="card">${e112}<div style="height:10px"></div><button class="ghost" style="width:100%" data-action="done">Back</button></div>`;
+    }
+    if (c.phase === 'active') {
+      return header() + `<div class="card center"><h1>${esc(c.peer)} is with you</h1><div class="big" id="timer">${fmtTime(Date.now() - c.startedAt)}</div>
+        <p class="mute small">${c.conn === 'connected' ? 'Voice connected' : c.conn === 'failed' ? 'Connection problem. Call 112 if you are in danger.' : 'Connecting voice…'}${c.noMic ? ' · Microphone is blocked, so they cannot hear you.' : ''}${c.locDenied ? ' · Location is blocked.' : ''}</p>
+        <div class="row"><button class="ghost" data-action="mute">${S.muted ? 'Unmute' : 'Mute'}</button><button class="danger" data-action="endCall">End call</button></div></div>
+        <div class="card"><p class="small mute">Your protector will never come to you or ask for your phone number. If you are in danger or need medical help, call 112.</p></div><div class="sticky"><div class="in">${e112}</div></div>`;
+    }
+  }
+  if (c.role === 'protector' && c.phase === 'active') {
+    return header() + `<div class="card center"><h1>On a call with ${esc(c.peer)}</h1><div class="big" id="timer">${fmtTime(Date.now() - c.startedAt)}</div>
+      <p class="mute small">${c.conn === 'connected' ? 'Voice connected' : 'Connecting voice…'}${c.noMic ? ' · Your microphone is blocked.' : ''}${c.escalated ? ' · They have tapped 112.' : ''}</p>
+      ${c.note ? `<p class="card" style="text-align:left"><b>They wrote:</b> ${esc(c.note)}</p>` : ''}
+      ${mapLink(c.location)}
+      <div class="row" style="margin-top:12px"><button class="ghost" data-action="mute">${S.muted ? 'Unmute' : 'Mute'}</button><button class="danger" data-action="endCall">End call</button></div></div>
+      <div class="card"><h2>Your script</h2><ul class="small" style="margin:0;padding-left:18px"><li>Stay calm, listen, ask what is happening and where they are.</li><li>If they are in danger or need medical help, tell them to call 112 now. Never delay it.</li><li>Never go to their location. Never share your contact details.</li><li>You can end the call at any time if you feel unsafe.</li></ul></div>`;
+  }
+  if (c.phase === 'after') {
+    const caller = c.role === 'caller';
+    return header() + `<div class="card"><h1>Call ended</h1>${c.msg ? `<p class="mute">${esc(c.msg)}</p>` : ''}
+      ${caller ? `<h2>How was your protector?</h2>${c.rated ? `<p>Thanks. You gave ${c.rated} / 5.</p>` : `<div class="row stars">${[1, 2, 3, 4, 5].map((n) => `<button class="ghost" data-action="rate" data-n="${n}">${n}</button>`).join('')}</div>`}` : ''}
+      <h2 style="margin-top:14px">Something wrong?</h2>
+      ${c.reported ? '<p>Thanks. Our team will review your report.</p>' : `<textarea id="reason" placeholder="Describe what happened. Reports are reviewed by our safety team." maxlength="500"></textarea><button class="ghost" style="margin-top:8px" data-action="report">Send report</button>`}
+      ${S.error ? `<div class="err">${esc(S.error)}</div>` : ''}
+      <div style="margin-top:14px"><button style="width:100%" data-action="done">Done</button></div></div>${caller ? `<div class="card">${e112.replace('data-action="call112"', '')}</div>` : ''}`;
+  }
+  return header() + '<div class="card">…</div>';
+}
+
+function protectorHome() {
+  const u = S.user;
+  if (u.status === 'pending') {
+    const c = u.checks || {};
+    const row = (ok, t) => `<div class="check">${ok ? '✅' : '⬜'} ${t}</div>`;
+    return header() + `<div class="card"><h1>Application under review</h1><p class="mute">Thanks for offering to help. You can take calls once every check below is complete.</p>
+      ${row(c.id, 'Identity verified')}${row(c.record, 'Criminal-record certificate checked')}${row(c.references, 'References checked')}${row(c.training, 'Training completed')}</div>${notice112}`;
+  }
+  if (u.status === 'rejected') return header() + `<div class="card"><h1>Application not approved</h1><p class="mute">We could not approve your application at this time.</p></div>`;
+  const inc = S.incoming;
+  return header() + `
+  <div class="card"><div class="row"><div><h2>${u.available ? 'You are available' : 'You are offline'}</h2><p class="mute small" style="margin:0">Keep this page open to hear alerts. Rating: ${u.rating == null ? 'no ratings yet' : u.rating + ' / 5 (' + u.ratingCount + ')'}</p></div>
+    <label class="check auto" style="margin:0"><input type="checkbox" data-action="toggleAvail" ${u.available ? 'checked' : ''}> Available</label></div>
+    ${S.error ? `<div class="err">${esc(S.error)}</div>` : ''}</div>
+  ${inc.length ? inc.map((a) => `<div class="card" style="border-color:var(--sos);border-width:2px"><h2>${esc(a.caller)} needs someone to talk to</h2>${a.note ? `<p>“${esc(a.note)}”</p>` : ''}<p class="mute small" data-expires="${a.expires}">${Math.max(0, Math.round((a.expires - Date.now()) / 1000))}s left to answer</p><div class="row"><button data-action="accept" data-id="${esc(a.alertId)}">Answer</button><button class="ghost" data-action="decline" data-id="${esc(a.alertId)}">Not now</button></div></div>`).join('') : `<div class="card center mute">${u.available ? 'Waiting for alerts…' : 'Turn on Available to start receiving alerts.'}</div>`}
+  <div class="card"><h2>Reminders</h2><ul class="small" style="margin:0;padding-left:18px"><li>You talk by voice only. Never go to the caller.</li><li>If anyone is in danger, tell them to call 112.</li><li>Never share your phone number or personal details.</li></ul></div>${notice112}`;
+}
+
+function adminView() {
+  const st = S.admin.stats || {};
+  const tabs = [['apps', 'Applications'], ['people', 'Protectors'], ['reports', 'Reports (' + (st.openReports || 0) + ')'], ['stats', 'Pilot metrics']];
+  const users = S.admin.users || [];
+  const chk = (u, k, label) => `<label class="check"><input type="checkbox" data-action="check" data-id="${esc(u.id)}" data-k="${k}" ${u.checks && u.checks[k] ? 'checked' : ''}> ${label}</label>`;
+  let body = '';
+  if (S.tab === 'apps') {
+    const pend = users.filter((u) => u.status === 'pending');
+    body = (S.error ? `<div class="err">${esc(S.error)}</div>` : '') + (pend.length ? pend.map((u) => `<div class="card"><h2>${esc(u.name)}</h2><p class="small mute">${esc(u.email)} · ${esc(u.country)} · ${esc(u.languages)}</p><p class="small">${esc(u.bio)}</p>
+      ${chk(u, 'id', 'Identity verified')}${chk(u, 'record', 'Criminal-record certificate checked')}${chk(u, 'references', 'Two references checked')}${chk(u, 'training', 'Training completed')}
+      <div class="row" style="margin-top:10px"><button data-action="adminAct" data-act="approve" data-id="${esc(u.id)}">Approve</button><button class="ghost" data-action="adminAct" data-act="reject" data-id="${esc(u.id)}">Reject</button></div></div>`).join('') : '<div class="card mute">No applications waiting.</div>');
+  } else if (S.tab === 'people') {
+    body = `<div class="card"><table><tr><th>Name</th><th>Status</th><th>Rating</th><th></th></tr>${users.filter((u) => u.status !== 'pending').map((u) => `<tr><td>${esc(u.name)}<br><span class="small mute">${esc(u.email)}</span></td><td>${esc(u.status)}${u.online ? ' · online' : ''}</td><td>${u.rating == null ? '–' : u.rating + ' (' + u.ratingCount + ')'}</td><td>${u.status === 'suspended' || u.status === 'rejected' ? `<button class="small ghost" data-action="adminAct" data-act="reinstate" data-id="${esc(u.id)}">Reinstate</button>` : `<button class="small danger" data-action="adminAct" data-act="suspend" data-id="${esc(u.id)}">Suspend</button>`}</td></tr>`).join('')}</table></div>`;
+  } else if (S.tab === 'reports') {
+    const rs = S.admin.reports || [];
+    body = rs.length ? rs.map((r) => `<div class="card"><p class="small mute">${new Date(r.createdAt).toLocaleString()} · ${esc(r.reporter)} reported ${esc(r.target)} ${r.resolved ? '<span class="pill ok">resolved</span>' : '<span class="pill warn">open</span>'}</p><p>${esc(r.reason)}</p>${r.resolved ? '' : `<button class="small ghost" data-action="resolve" data-id="${esc(r.id)}">Mark resolved</button>`}</div>`).join('') : '<div class="card mute">No reports.</div>';
+  } else {
+    const pct = (x) => (x == null ? '–' : Math.round(x * 100) + '%');
+    body = `<div class="card"><div class="stat"><b>${st.alerts}</b>alerts</div><div class="stat"><b>${pct(st.answeredShare)}</b>answered</div><div class="stat"><b>${st.medianAnswerSeconds == null ? '–' : st.medianAnswerSeconds + 's'}</b>median time to answer</div><div class="stat"><b>${pct(st.within30s)}</b>answered within 30s</div><div class="stat"><b>${pct(st.escalatedShare)}</b>tapped 112</div><div class="stat"><b>${st.avgRating == null ? '–' : st.avgRating}</b>average rating</div><div class="stat"><b>${st.protectorsApproved}</b>approved protectors</div><div class="stat"><b>${st.protectorsOnline}</b>online now</div></div>`;
+  }
+  return header() + `<div class="tabs">${tabs.map(([k, l]) => `<button class="${S.tab === k ? '' : 'ghost'}" data-action="tab" data-tab="${k}">${esc(l)}</button>`).join('')}</div>${body}`;
+}
+
+function render() {
+  const active = document.activeElement;
+  const keep = active && active.id && /^(note|reason|name|email|password|country|languages|bio)$/.test(active.id) ? { id: active.id, v: active.value, s: active.selectionStart } : null;
+  let html;
+  if (S.loading) html = header() + '<div class="card center mute">Loading…</div>';
+  else if (!S.user) html = authView();
+  else if (S.call) html = callView();
+  else if (S.user.role === 'admin') html = adminView();
+  else if (S.user.role === 'protector') html = protectorHome();
+  else html = callerHome();
+  $app.innerHTML = html;
+  if (keep) { const el = document.getElementById(keep.id); if (el) { el.value = keep.v; el.focus(); try { el.setSelectionRange(keep.s, keep.s); } catch {} } }
+}
+
+/* clock: updates timers in place (no re-render, so buttons and typed text are never disturbed) */
+let tickN = 0;
+setInterval(() => {
+  tickN++;
+  const t = document.getElementById('timer');
+  if (S.call && t) {
+    if (S.call.phase === 'ringing') t.textContent = Math.max(0, S.config.answerSeconds - Math.floor((Date.now() - S.call.startedAt) / 1000)) + 's';
+    else if (S.call.phase === 'active') t.textContent = fmtTime(Date.now() - S.call.startedAt);
+  }
+  document.querySelectorAll('[data-expires]').forEach((el) => { el.textContent = Math.max(0, Math.round((+el.dataset.expires - Date.now()) / 1000)) + 's left to answer'; });
+  if (S.incoming.some((a) => a.expires <= Date.now())) { S.incoming = S.incoming.filter((a) => a.expires > Date.now()); if (!S.incoming.length) stopBeep(); render(); }
+  if (tickN % 3 === 0 && S.user && S.user.role === 'caller' && !S.call && document.visibilityState === 'visible') {
+    api('/availability').then((r) => { if (r.protectorsOnline !== S.online && !S.call) { S.online = r.protectorsOnline; render(); } }).catch(() => {});
+  }
+}, 1000);
+
+boot();
+</script>
+</body>
+</html>

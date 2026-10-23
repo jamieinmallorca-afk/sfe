@@ -7,6 +7,8 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const bcrypt = require('bcryptjs');
+const { marked } = require('marked');
+const LEGAL_VERSION = '2026-10-pilot-1';
 
 const PORT = Number(process.env.PORT || 3000);
 const ANSWER_SECONDS = Number(process.env.ANSWER_SECONDS || 30);
@@ -44,7 +46,7 @@ const first = (name) => String(name || '').trim().split(/\s+/)[0] || 'Someone';
 const clean = (s, n) => String(s == null ? '' : s).trim().slice(0, n);
 const userById = (uid) => db.users.find((u) => u.id === uid);
 function publicUser(u) {
-  const o = { id: u.id, name: u.name, email: u.email, role: u.role, status: u.status };
+  const o = { id: u.id, name: u.name, email: u.email, role: u.role, status: u.status, acceptedTerms: u.acceptedTerms || null, acceptedAgreement: u.acceptedAgreement || null };
   if (u.role === 'protector') {
     Object.assign(o, {
       available: !!u.available, languages: u.languages || '', bio: u.bio || '', country: u.country || '',
@@ -85,6 +87,19 @@ const app = express();
 app.use(express.json({ limit: '20kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ---------- legal pages (text lives in legal/*.md) ----------
+const LEGAL_PAGES = { '/privacy': ['privacy.md', 'Privacy Notice'], '/terms': ['terms.md', 'Terms of Use'], '/protector-agreement': ['protector-agreement.md', 'Protector Agreement'] };
+for (const [route, [file, title]] of Object.entries(LEGAL_PAGES)) {
+  app.get(route, (req, res) => {
+    const md = fs.readFileSync(path.join(__dirname, 'legal', file), 'utf8');
+    res.type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>sfe — ${title}</title>
+<style>:root{color-scheme:light dark}body{font:16px/1.55 system-ui,sans-serif;max-width:720px;margin:0 auto;padding:16px}h1{font-size:1.6rem}h2{font-size:1.15rem;margin-top:1.6em}table{border-collapse:collapse;width:100%;font-size:.9rem}td,th{border:1px solid #8884;padding:6px;text-align:left;vertical-align:top}.pilot{background:#fff3cd;color:#5c4400;padding:10px 12px;border-radius:8px;font-size:.9rem}a{color:inherit}nav{margin-top:2em;font-size:.9rem}</style></head><body>
+<p class="pilot"><b>Pilot version ${LEGAL_VERSION}.</b> sfe is in a closed test with friends. These texts are working drafts and are being reviewed by a lawyer. Anything in [square brackets] is still to be completed.</p>
+<p><a href="/">← Back to sfe</a></p>${marked.parse(md)}
+<nav><a href="/privacy">Privacy Notice</a> · <a href="/terms">Terms of Use</a> · <a href="/protector-agreement">Protector Agreement</a></nav></body></html>`);
+  });
+}
+
 const loginAttempts = new Map();
 function tooManyLogins(key) {
   const t = now();
@@ -106,7 +121,7 @@ function auth(req, res, next) {
 const need = (...roles) => (req, res, next) =>
   roles.includes(req.user.role) ? next() : res.status(403).json({ error: 'Not allowed' });
 
-app.get('/api/config', (req, res) => res.json({ iceServers: ICE_SERVERS, answerSeconds: ANSWER_SECONDS }));
+app.get('/api/config', (req, res) => res.json({ iceServers: ICE_SERVERS, answerSeconds: ANSWER_SECONDS, legalVersion: LEGAL_VERSION }));
 
 app.post('/api/signup', (req, res) => {
   const name = clean(req.body.name, 60), email = clean(req.body.email, 120).toLowerCase();
@@ -114,10 +129,14 @@ app.post('/api/signup', (req, res) => {
   if (!name || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Name and a valid email are required' });
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
   if (db.users.find((u) => u.email === email)) return res.status(409).json({ error: 'Email already registered' });
+  if (req.body.acceptTerms !== true) return res.status(400).json({ error: 'Please confirm you are 18 or over and accept the Terms of Use and Privacy Notice' });
+  if (role === 'protector' && req.body.acceptAgreement !== true) return res.status(400).json({ error: 'Please accept the Protector Agreement' });
   const u = {
     id: id(), name, email, passHash: bcrypt.hashSync(password, 10), role, createdAt: now(),
     status: role === 'protector' ? 'pending' : 'approved',
+    acceptedTerms: { at: now(), version: LEGAL_VERSION },
   };
+  if (role === 'protector') u.acceptedAgreement = { at: now(), version: LEGAL_VERSION };
   if (role === 'protector') {
     Object.assign(u, {
       languages: clean(req.body.languages, 100), bio: clean(req.body.bio, 500), country: clean(req.body.country, 60),
@@ -159,6 +178,36 @@ app.get('/api/me', auth, (req, res) => {
     protectorsOnline: availableProtectors().length,
     activeAlert: a ? { id: a.id, role: a.callerId === req.user.id ? 'caller' : 'protector' } : null,
   });
+});
+
+app.get('/api/me/export', auth, (req, res) => {
+  const uid = req.user.id;
+  const { passHash, ...account } = req.user;
+  res.setHeader('Content-Disposition', 'attachment; filename="sfe-my-data.json"');
+  res.json({
+    exportedAt: new Date().toISOString(), account,
+    alerts: db.alerts.filter((a) => a.callerId === uid || a.acceptedBy === uid),
+    reportsIMade: db.reports.filter((r) => r.reporterId === uid),
+  });
+});
+
+app.post('/api/me/delete', auth, (req, res) => {
+  const u = req.user;
+  if (u.role === 'admin') return res.status(403).json({ error: 'The admin account cannot be deleted here' });
+  if (!bcrypt.compareSync(String(req.body.password || ''), u.passHash)) return res.status(401).json({ error: 'Wrong password' });
+  if (db.alerts.find((a) => (a.status === 'ringing' || a.status === 'active') && (a.callerId === u.id || a.acceptedBy === u.id)))
+    return res.status(409).json({ error: 'Please end your open call first' });
+  // keep anonymous alert totals for pilot statistics, remove everything personal
+  for (const a of db.alerts) {
+    if (a.callerId === u.id) { a.callerId = 'deleted'; a.note = ''; a.location = null; }
+    if (a.acceptedBy === u.id) a.acceptedBy = 'deleted';
+    if (Array.isArray(a.notified)) a.notified = a.notified.filter((x) => x !== u.id);
+  }
+  for (const t of Object.keys(db.sessions)) if (db.sessions[t].userId === u.id) delete db.sessions[t];
+  db.users = db.users.filter((x) => x.id !== u.id);
+  save();
+  for (const ws of clients.get(u.id) || []) ws.close();
+  res.json({ ok: true });
 });
 
 app.get('/api/availability', auth, (req, res) => res.json({ protectorsOnline: availableProtectors().length }));
@@ -338,7 +387,7 @@ app.get('/api/admin/reports', auth, need('admin'), (req, res) =>
 app.post('/api/admin/reports/:id/resolve', auth, need('admin'), (req, res) => {
   const r = db.reports.find((x) => x.id === req.params.id);
   if (!r) return res.status(404).json({ error: 'Not found' });
-  r.resolved = true; save(); res.json(r);
+  r.resolved = true; r.resolvedAt = now(); save(); res.json(r);
 });
 app.get('/api/admin/stats', auth, need('admin'), (req, res) => {
   const A = db.alerts;
@@ -360,6 +409,19 @@ app.get('/api/admin/stats', auth, need('admin'), (req, res) => {
     openReports: db.reports.filter((r) => !r.resolved).length,
   });
 });
+
+// ---------- retention (see Privacy Notice) ----------
+const DAY = 24 * 3600 * 1000;
+function sweep(nowMs = now()) {
+  const nA = db.alerts.length, nR = db.reports.length;
+  db.alerts = db.alerts.filter((a) => (a.status === 'ringing' || a.status === 'active') || nowMs - a.createdAt < 365 * DAY);
+  db.reports = db.reports.filter((r) => !(r.resolved && nowMs - (r.resolvedAt || r.createdAt) > 730 * DAY));
+  for (const t of Object.keys(db.sessions)) if (nowMs - db.sessions[t].at > 90 * DAY) delete db.sessions[t];
+  if (db.alerts.length !== nA || db.reports.length !== nR) save();
+  return { alerts: nA - db.alerts.length, reports: nR - db.reports.length };
+}
+sweep();
+setInterval(sweep, 6 * 3600 * 1000).unref();
 
 // ---------- websocket: presence + WebRTC signalling ----------
 const server = http.createServer(app);
@@ -393,4 +455,4 @@ wss.on('connection', (ws, req) => {
 if (require.main === module) {
   server.listen(PORT, () => console.log(`sfe prototype running on http://localhost:${PORT}`));
 }
-module.exports = { server, app, db };
+module.exports = { server, app, db, sweep };

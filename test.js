@@ -43,16 +43,16 @@ const ok = (name) => { passed++; console.log('  ok  ' + name); };
   base = 'http://127.0.0.1:' + port; wsBase = 'ws://127.0.0.1:' + port;
 
   // --- accounts
-  let r = await api('/signup', null, { name: 'Ana Caller', email: 'ana@x.com', password: 'password1', role: 'caller' });
+  let r = await api('/signup', null, { name: 'Ana Caller', email: 'ana@x.com', password: 'password1', role: 'caller', acceptTerms: true });
   assert.equal(r.status, 200); const caller = r.body.token; ok('caller signs up');
-  r = await api('/signup', null, { name: 'Ana Caller', email: 'ana@x.com', password: 'password1' });
+  r = await api('/signup', null, { name: 'Ana Caller', email: 'ana@x.com', password: 'password1', acceptTerms: true });
   assert.equal(r.status, 409); ok('duplicate email rejected');
-  r = await api('/signup', null, { name: 'Bad', email: 'bad@x.com', password: 'short' });
+  r = await api('/signup', null, { name: 'Bad', email: 'bad@x.com', password: 'short', acceptTerms: true });
   assert.equal(r.status, 400); ok('short password rejected');
-  r = await api('/signup', null, { name: 'Pablo Protector', email: 'pablo@x.com', password: 'password1', role: 'protector', languages: 'es,en' });
+  r = await api('/signup', null, { name: 'Pablo Protector', email: 'pablo@x.com', password: 'password1', role: 'protector', languages: 'es,en', acceptTerms: true, acceptAgreement: true });
   const pabloTok = r.body.token, pabloId = r.body.user.id;
   assert.equal(r.body.user.status, 'pending'); ok('protector starts as pending');
-  r = await api('/signup', null, { name: 'Marta Protector', email: 'marta@x.com', password: 'password1', role: 'protector' });
+  r = await api('/signup', null, { name: 'Marta Protector', email: 'marta@x.com', password: 'password1', role: 'protector', acceptTerms: true, acceptAgreement: true });
   const martaTok = r.body.token, martaId = r.body.user.id;
 
   r = await api('/protector/available', pabloTok, { available: true });
@@ -141,6 +141,24 @@ const ok = (name) => { passed++; console.log('  ok  ' + name); };
   }
   assert.ok(capped); ok('hourly alert cap enforced');
 
+  // --- consent, export, delete, retention, legal pages
+  r = await api('/signup', null, { name: 'No Consent', email: 'nc@x.com', password: 'password1' });
+  assert.equal(r.status, 400); ok('sign-up refused without accepting terms');
+  r = await api('/signup', null, { name: 'No Agree', email: 'na@x.com', password: 'password1', role: 'protector', acceptTerms: true });
+  assert.equal(r.status, 400); ok('protector sign-up refused without accepting the agreement');
+  r = await api('/admin/users', admin);
+  assert.ok(r.body.find((u) => u.id === pabloId).acceptedAgreement.version); ok('agreement acceptance (time + version) visible to admin');
+  for (const p of ['/privacy', '/terms', '/protector-agreement']) {
+    const t = await (await fetch(base + p)).text(); assert.ok(t.includes('Pilot version') && !t.includes('lawyer review.')); }
+  ok('legal pages served');
+  r = await api('/me/export', caller); assert.equal(r.status, 200); assert.ok(r.body.alerts.length > 0 && !r.body.account.passHash); ok('data export works and omits password hash');
+  const { db, sweep } = require('./server');
+  const oldLen = db.alerts.length; db.alerts[0].createdAt = Date.now() - 400 * 86400000;
+  assert.equal(sweep().alerts, 1); assert.equal(db.alerts.length, oldLen - 1); ok('retention sweep removes alerts older than 12 months');
+  r = await api('/me/delete', caller, { password: 'wrong' }); assert.equal(r.status, 401); ok('delete needs correct password');
+  r = await api('/me/delete', caller, { password: 'password1' }); assert.equal(r.status, 200);
+  r = await api('/me', caller); assert.equal(r.status, 401);
+  assert.ok(!db.users.find((u) => u.email === 'ana@x.com') && db.alerts.every((a) => a.callerId !== 'ana' && !a.note)); ok('account deleted, notes and locations erased');
   console.log(`\n${passed} checks passed`);
   [wsC, wsP, wsM].forEach((w) => w.close());
   server.close(); process.exit(0);

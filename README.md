@@ -41,3 +41,9 @@ answered within 30 s, share that tapped 112, ratings).
 - server.js: API, alert logic, WebSocket signalling
 - public/index.html: the whole mobile-first app (caller, protector and admin screens)
 - test.js: automated end-to-end test
+
+
+## Legal texts and account tools
+
+- `legal/*.md` are served at `/privacy`, `/terms`, `/protector-agreement`. Edit the markdown, bump `LEGAL_VERSION` in `server.js`, redeploy.
+- Sign-up records acceptance (time + version). Users can download their data and delete their account from the footer. A retention job removes alerts older than 12 months and resolved reports older than 24 months.

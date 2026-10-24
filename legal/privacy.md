@@ -2,9 +2,9 @@
 
 ## Who we are
 
-sfe is a pilot service that connects people who feel unsafe with vetted volunteer protectors for a voice conversation. It supports the emergency number 112 and does not replace it.
+sfe is a pilot service that connects people who feel unsafe with vetted volunteer protectors, who stay with you by voice while you wait for help to arrive. It supports the emergency number 112 and does not replace it. Call 112 first.
 
-The controller of your personal data is [legal name of the company], tax ID [CIF], [registered address], Palma, Illes Balears, Spain. For privacy questions write to [privacy email address].
+The controller of your personal data is [name of the non-profit association], tax ID [CIF], [registered address], Palma, Illes Balears, Spain. For privacy questions write to [privacy email address].
 
 This notice explains what we collect, why, who sees it, how long we keep it and what rights you have. It applies to callers (people asking for support) and to protectors (volunteers).
 
@@ -17,10 +17,12 @@ This notice explains what we collect, why, who sees it, how long we keep it and 
 | The optional note you type with an alert | Callers | Tell protectors what is happening | Your consent (Art. 6.1.a) |
 | Alert record: time, who answered, call length, whether you tapped 112, outcome | Callers, protectors | Run the service, protect safety, measure the pilot, handle complaints | Our legitimate interest in a safe and working service (Art. 6.1.f) |
 | Ratings and reports about a call | Callers, protectors | Keep people safe and investigate misconduct | Legitimate interest (Art. 6.1.f) |
-| Country, languages, short bio and vetting status (ID, criminal-record declaration, references, training) | Protectors | Decide whether you can become a protector and keep callers safe | Steps to join (Art. 6.1.b) and legitimate interest (Art. 6.1.f). Criminal-record data only as the law allows |
+| Country, languages, short bio, relevant experience (type of service, years, a reference contact) and vetting status (ID, criminal-record declaration, references, experience, training) | Protectors | Decide whether you can become a protector and keep callers safe | Steps to join (Art. 6.1.b) and legitimate interest (Art. 6.1.f). Criminal-record data only as the law allows |
 | Technical data such as device type and IP address in server and hosting logs | Everyone | Security, stop abuse, make the voice connection work | Legitimate interest (Art. 6.1.f) |
 
-We do not keep copies of ID documents or criminal-record paperwork in the app. We record only that a check was completed.
+We do not keep copies of ID documents, service records or criminal-record paperwork in the app. We record only that a check was completed.
+
+We also record whether you told us you had called 112 during an alert, so that we can check the service supports the emergency number and does not replace it.
 
 We do not sell your data, use it for advertising, or make automated decisions about you.
 

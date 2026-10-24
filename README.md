@@ -10,8 +10,8 @@ pilot. It is NOT ready for public launch (see "Before real use").
     npm test                                             # 27 end-to-end checks of the alert flow
 
 Open the site on two devices (or two browser windows):
-1. Sign up as a protector. Log in as the admin (admin@sfe.local + your ADMIN_PASSWORD), open Applications, tick the four
-   vetting checks and Approve. Approval is refused until all four are ticked.
+1. Sign up as a protector. Log in as the admin (admin@sfe.local + your ADMIN_PASSWORD), open Applications, tick the five
+   vetting checks and Approve. Approval is refused until all five are ticked.
 2. Log in as the protector, tick Available, and keep the page open.
 3. Sign up as a caller and press SOS. The protector hears a tone, taps Answer, and the voice call connects.
 
@@ -19,7 +19,7 @@ Admin has tabs for applications, protectors (suspend/reinstate), reports, and pi
 answered within 30 s, share that tapped 112, ratings).
 
 ## What is built
-- Accounts, protector applications, four-check vetting gate, admin approve/reject/suspend
+- Accounts, protector applications, five-check vetting gate (incl. verified experience), admin approve/reject/suspend
 - SOS: rings every available protector at once; first to accept wins (race-safe); others are released
 - 30 s no-answer fallback (and instant fallback when nobody is online) telling the caller to call 112
 - In-browser voice via WebRTC, signalled over WebSocket; no phone numbers are ever exchanged

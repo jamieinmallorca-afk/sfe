@@ -130,7 +130,9 @@ function onWS(m) {
   } else if (m.type === 'location' && S.call && S.call.alertId === m.alertId) {
     S.call.location = m.location; render();
   } else if (m.type === 'escalated' && S.call && S.call.alertId === m.alertId) {
-    S.call.escalated = true; render();
+    S.call.escalated = true; S.call.called112 = true; render();
+  } else if (m.type === 'called112' && S.call && S.call.alertId === m.alertId) {
+    S.call.called112 = true; render();
   } else if (m.type === 'signal' && S.call && S.call.alertId === m.alertId) {
     onSignal(m.data);
   }
@@ -217,7 +219,7 @@ const actions = {
     try {
       const body = S.authMode === 'login'
         ? { email: v('email'), password: v('password') }
-        : { name: v('name'), email: v('email'), password: v('password'), role: S.authRole, languages: v('languages'), country: v('country'), bio: v('bio'), acceptTerms: !!S.acceptTerms, acceptAgreement: !!S.acceptAgreement };
+        : { name: v('name'), email: v('email'), password: v('password'), role: S.authRole, languages: v('languages'), country: v('country'), bio: v('bio'), experienceType: v('experienceType'), experienceYears: v('experienceYears'), experienceRef: v('experienceRef'), acceptTerms: !!S.acceptTerms, acceptAgreement: !!S.acceptAgreement };
       const r = await api(S.authMode === 'login' ? '/login' : '/signup', 'POST', body);
       S.token = r.token; store.set('sfe_token', r.token); await boot();
     } catch (e) { S.error = e.message; render(); }
@@ -259,7 +261,8 @@ const actions = {
     render();
   },
   async cancelAlert() { try { await api('/alerts/' + S.call.alertId + '/end', 'POST'); } catch {} cleanupMedia(); S.call = null; render(); },
-  async call112() { if (S.call && S.call.role === 'caller') { S.call.escalated = true; api('/alerts/' + S.call.alertId + '/escalate', 'POST').catch(() => {}); } },
+  async iCalled112() { if (S.call && S.call.role === 'caller') { S.call.called112 = true; api('/alerts/' + S.call.alertId + '/called112', 'POST').catch(() => {}); render(); } },
+  async call112() { if (S.call && S.call.role === 'caller') { S.call.escalated = true; S.call.called112 = true; api('/alerts/' + S.call.alertId + '/escalate', 'POST').catch(() => {}); } },
   async endCall() {
     try { await api('/alerts/' + S.call.alertId + '/end', 'POST'); } catch {}
     endLocal('');
@@ -284,7 +287,7 @@ const actions = {
     try {
       const r = await api('/alerts/' + alertId + '/accept', 'POST');
       S.incoming = [];
-      S.call = { alertId, role: 'protector', phase: 'active', peer: r.caller, note: r.note, location: r.location, startedAt: Date.now() };
+      S.call = { alertId, role: 'protector', phase: 'active', peer: r.caller, note: r.note, location: r.location, called112: r.called112, startedAt: Date.now() };
       await getMic(); makePC();                   // ready for the caller's offer
       if (!S.stream) S.call.noMic = true;
     } catch (e) { S.incoming = S.incoming.filter((x) => x.alertId !== alertId); S.error = e.message; if (!S.incoming.length) stopBeep(); }
@@ -356,7 +359,7 @@ function authView() {
     ${!login ? `<label for="name">Your name</label><input id="name" autocomplete="name">` : ''}
     <label for="email">Email</label><input id="email" type="email" autocomplete="email">
     <label for="password">Password ${login ? '' : '(8+ characters)'}</label><input id="password" type="password" autocomplete="${login ? 'current-password' : 'new-password'}">
-    ${!login && prot ? `<label for="country">Country</label><input id="country"><label for="languages">Languages you speak</label><input id="languages" placeholder="e.g. Spanish, English, German"><label for="bio">Why do you want to help? Any relevant training?</label><textarea id="bio"></textarea><p class="small mute">New protectors are vetted before they can take calls: ID check, a written criminal-record declaration, references and a short training.</p>` : ''}
+    ${!login && prot ? `<label for="country">Country</label><input id="country"><label for="languages">Languages you speak</label><input id="languages" placeholder="e.g. Spanish, English, German"><label for="experienceType">Relevant experience</label><select id="experienceType"><option value="">Choose…</option><option>Police / Guardia Civil</option><option>Military</option><option>Firefighter</option><option>Paramedic / ambulance</option><option>Other emergency service</option><option>Crisis line / social work</option><option>Other</option></select><label for="experienceYears">Years of experience</label><input id="experienceYears" inputmode="numeric"><label for="experienceRef">Someone who can confirm it (name and phone or email)</label><input id="experienceRef"><label for="bio">Why do you want to help? Any relevant training?</label><textarea id="bio"></textarea><p class="small mute">New protectors are vetted before they can take calls: ID check, a written criminal-record declaration, references, proof of relevant emergency-services, military or similar experience, and a short training.</p>` : ''}
     ${!login ? `<label class="check"><input type="checkbox" data-action="toggleTerms" ${S.acceptTerms ? 'checked' : ''}> <span class="small">I am 18 or over and accept the <a href="/terms" target="_blank">Terms of Use</a> and <a href="/privacy" target="_blank">Privacy Notice</a>.</span></label>` : ''}
     ${!login && prot ? `<label class="check"><input type="checkbox" data-action="toggleAgree" ${S.acceptAgreement ? 'checked' : ''}> <span class="small">I accept the <a href="/protector-agreement" target="_blank">Protector Agreement</a>, including the criminal-record declaration.</span></label>` : ''}
     ${S.error ? `<div class="err">${esc(S.error)}</div>` : ''}
@@ -369,7 +372,7 @@ function callerHome() {
   return header() + `
   <div class="card center">
     <h1>Feeling unsafe?</h1>
-    <p class="mute">Tap to ring vetted protectors. The first to answer talks with you by voice.</p>
+    <p class="mute"><b>In danger? Call 112 first.</b> Then tap to ring vetted protectors. The first to answer stays with you by voice until help arrives.</p>
     <button class="sos" data-action="sos">SOS<small>${S.online ? S.online + ' protector' + (S.online > 1 ? 's' : '') + ' online' : 'no protectors online'}</small></button>
     ${S.error ? `<div class="err">${esc(S.error)}</div>` : ''}
     <label for="note" style="text-align:left">Optional: tell them briefly what is happening</label>
@@ -383,13 +386,16 @@ function callerHome() {
 function callView() {
   const c = S.call;
   const e112 = `<a class="btn e112" style="width:100%" href="tel:112" data-action="call112">Call 112</a>`;
+  const ask112 = c.role === 'caller' && !c.called112 && !c.escalated && (c.phase === 'ringing' || c.phase === 'active')
+    ? `<div class="card" style="border-color:var(--sos);border-width:2px"><h2>Have you called 112?</h2><p class="small mute">sfe stays with you by voice until help arrives. It does not send help. Please call 112 now if you have not.</p><div class="row"><a class="btn e112" href="tel:112" data-action="call112">Call 112 now</a><button class="ghost" data-action="iCalled112">Yes, I have called</button></div></div>`
+    : (c.role === 'caller' && (c.called112 || c.escalated) && (c.phase === 'ringing' || c.phase === 'active') ? `<p class="small mute center">Good. Help is on its way. Stay safe and keep talking.</p>` : '');
   if (c.phase === 'stale') {
     return header() + `<div class="card"><h2>You have a call open</h2><p class="mute">The call was interrupted. You can end it here.</p><button data-action="endCall" class="danger" style="width:100%">End call</button></div>`;
   }
   if (c.role === 'caller') {
     if (c.phase === 'ringing') {
       const left = Math.max(0, S.config.answerSeconds - Math.floor((Date.now() - c.startedAt) / 1000));
-      return header() + `<div class="card center"><h1>Ringing protectors…</h1><div class="big" id="timer">${left}s</div><p class="mute">${c.ringing} protector${c.ringing > 1 ? 's' : ''} alerted. If nobody answers you will be told straight away.</p><button class="ghost" data-action="cancelAlert">Cancel</button></div><div class="sticky"><div class="in">${e112}</div></div>`;
+      return header() + `<div class="card center"><h1>Ringing protectors…</h1><div class="big" id="timer">${left}s</div><p class="mute">${c.ringing} protector${c.ringing > 1 ? 's' : ''} alerted. If nobody answers you will be told straight away.</p><button class="ghost" data-action="cancelAlert">Cancel</button></div>${ask112}<div class="sticky"><div class="in">${e112}</div></div>`;
     }
     if (c.phase === 'unanswered') {
       return header() + `<div class="banner bad">${c.reason === 'no_protectors_online' ? 'No protectors are online right now.' : 'Nobody could answer in time.'} Please call 112 now if you need help.</div><div class="card">${e112}<div style="height:10px"></div><button class="ghost" style="width:100%" data-action="done">Back</button></div>`;
@@ -398,16 +404,17 @@ function callView() {
       return header() + `<div class="card center"><h1>${esc(c.peer)} is with you</h1><div class="big" id="timer">${fmtTime(Date.now() - c.startedAt)}</div>
         <p class="mute small">${c.conn === 'connected' ? 'Voice connected' : c.conn === 'failed' ? 'Connection problem. Call 112 if you are in danger.' : 'Connecting voice…'}${c.noMic ? ' · Microphone is blocked, so they cannot hear you.' : ''}${c.locDenied ? ' · Location is blocked.' : ''}</p>
         <div class="row"><button class="ghost" data-action="mute">${S.muted ? 'Unmute' : 'Mute'}</button><button class="danger" data-action="endCall">End call</button></div></div>
-        <div class="card"><p class="small mute">Your protector will never come to you or ask for your phone number. If you are in danger or need medical help, call 112.</p></div><div class="sticky"><div class="in">${e112}</div></div>`;
+        ${ask112}<div class="card"><p class="small mute">Your protector will never come to you or ask for your phone number. If you are in danger or need medical help, call 112.</p></div><div class="sticky"><div class="in">${e112}</div></div>`;
     }
   }
   if (c.role === 'protector' && c.phase === 'active') {
     return header() + `<div class="card center"><h1>On a call with ${esc(c.peer)}</h1><div class="big" id="timer">${fmtTime(Date.now() - c.startedAt)}</div>
       <p class="mute small">${c.conn === 'connected' ? 'Voice connected' : 'Connecting voice…'}${c.noMic ? ' · Your microphone is blocked.' : ''}${c.escalated ? ' · They have tapped 112.' : ''}</p>
+      ${!c.called112 ? `<p class="card" style="text-align:left;border-color:var(--sos);border-width:2px"><b>Ask first:</b> have they called 112? Tell them to call now. They have not confirmed yet.</p>` : `<p class="small mute">They have confirmed 112 is called.</p>`}
       ${c.note ? `<p class="card" style="text-align:left"><b>They wrote:</b> ${esc(c.note)}</p>` : ''}
       ${mapLink(c.location)}
       <div class="row" style="margin-top:12px"><button class="ghost" data-action="mute">${S.muted ? 'Unmute' : 'Mute'}</button><button class="danger" data-action="endCall">End call</button></div></div>
-      <div class="card"><h2>Your script</h2><ul class="small" style="margin:0;padding-left:18px"><li>Stay calm, listen, ask what is happening and where they are.</li><li>If they are in danger or need medical help, tell them to call 112 now. Never delay it.</li><li>Never go to their location. Never share your contact details.</li><li>You can end the call at any time if you feel unsafe.</li></ul></div>`;
+      <div class="card"><h2>Your script</h2><ul class="small" style="margin:0;padding-left:18px"><li>First ask: have you called 112? If not, tell them to call now.</li><li>Stay calm, listen, ask what is happening and where they are.</li><li>Never say or imply you are police or any authority.</li><li>If they are in danger or need medical help, tell them to call 112 now. Never delay it.</li><li>Never go to their location. Never share your contact details.</li><li>You can end the call at any time if you feel unsafe.</li></ul></div>`;
   }
   if (c.phase === 'after') {
     const caller = c.role === 'caller';
@@ -427,7 +434,7 @@ function protectorHome() {
     const c = u.checks || {};
     const row = (ok, t) => `<div class="check">${ok ? '✅' : '⬜'} ${t}</div>`;
     return header() + `<div class="card"><h1>Application under review</h1><p class="mute">Thanks for offering to help. You can take calls once every check below is complete.</p>
-      ${row(c.id, 'Identity verified')}${row(c.record, 'Criminal-record declaration checked')}${row(c.references, 'References checked')}${row(c.training, 'Training completed')}</div>${notice112}`;
+      ${row(c.id, 'Identity verified')}${row(c.record, 'Criminal-record declaration checked')}${row(c.references, 'References checked')}${row(c.experience, 'Experience verified')}${row(c.training, 'Training completed')}</div>${notice112}`;
   }
   if (u.status === 'rejected') return header() + `<div class="card"><h1>Application not approved</h1><p class="mute">We could not approve your application at this time.</p></div>`;
   const inc = S.incoming;
@@ -447,8 +454,8 @@ function adminView() {
   let body = '';
   if (S.tab === 'apps') {
     const pend = users.filter((u) => u.status === 'pending');
-    body = (S.error ? `<div class="err">${esc(S.error)}</div>` : '') + (pend.length ? pend.map((u) => `<div class="card"><h2>${esc(u.name)}</h2><p class="small mute">${esc(u.email)} · ${esc(u.country)} · ${esc(u.languages)}</p><p class="small mute">Agreement accepted: ${u.acceptedAgreement ? new Date(u.acceptedAgreement.at).toLocaleString() + ' (' + esc(u.acceptedAgreement.version) + ')' : 'not recorded'}</p><p class="small">${esc(u.bio)}</p>
-      ${chk(u, 'id', 'Identity verified')}${chk(u, 'record', 'Criminal-record declaration checked')}${chk(u, 'references', 'Two references checked')}${chk(u, 'training', 'Training completed')}
+    body = (S.error ? `<div class="err">${esc(S.error)}</div>` : '') + (pend.length ? pend.map((u) => `<div class="card"><h2>${esc(u.name)}</h2><p class="small mute">${esc(u.email)} · ${esc(u.country)} · ${esc(u.languages)}</p><p class="small mute">Agreement accepted: ${u.acceptedAgreement ? new Date(u.acceptedAgreement.at).toLocaleString() + ' (' + esc(u.acceptedAgreement.version) + ')' : 'not recorded'}</p><p class="small"><b>Experience:</b> ${esc(u.experienceType)}${u.experienceYears ? ', ' + esc(u.experienceYears) + ' yrs' : ''} · Ref: ${esc(u.experienceRef)}</p><p class="small">${esc(u.bio)}</p>
+      ${chk(u, 'id', 'Identity verified')}${chk(u, 'record', 'Criminal-record declaration checked')}${chk(u, 'references', 'Two references checked')}${chk(u, 'experience', 'Relevant experience verified')}${chk(u, 'training', 'Training completed')}
       <div class="row" style="margin-top:10px"><button data-action="adminAct" data-act="approve" data-id="${esc(u.id)}">Approve</button><button class="ghost" data-action="adminAct" data-act="reject" data-id="${esc(u.id)}">Reject</button></div></div>`).join('') : '<div class="card mute">No applications waiting.</div>');
   } else if (S.tab === 'people') {
     body = `<div class="card"><table><tr><th>Name</th><th>Status</th><th>Rating</th><th></th></tr>${users.filter((u) => u.status !== 'pending').map((u) => `<tr><td>${esc(u.name)}<br><span class="small mute">${esc(u.email)}</span></td><td>${esc(u.status)}${u.online ? ' · online' : ''}</td><td>${u.rating == null ? '–' : u.rating + ' (' + u.ratingCount + ')'}</td><td>${u.status === 'suspended' || u.status === 'rejected' ? `<button class="small ghost" data-action="adminAct" data-act="reinstate" data-id="${esc(u.id)}">Reinstate</button>` : `<button class="small danger" data-action="adminAct" data-act="suspend" data-id="${esc(u.id)}">Suspend</button>`}</td></tr>`).join('')}</table></div>`;
@@ -457,14 +464,14 @@ function adminView() {
     body = rs.length ? rs.map((r) => `<div class="card"><p class="small mute">${new Date(r.createdAt).toLocaleString()} · ${esc(r.reporter)} reported ${esc(r.target)} ${r.resolved ? '<span class="pill ok">resolved</span>' : '<span class="pill warn">open</span>'}</p><p>${esc(r.reason)}</p>${r.resolved ? '' : `<button class="small ghost" data-action="resolve" data-id="${esc(r.id)}">Mark resolved</button>`}</div>`).join('') : '<div class="card mute">No reports.</div>';
   } else {
     const pct = (x) => (x == null ? '–' : Math.round(x * 100) + '%');
-    body = `<div class="card"><div class="stat"><b>${st.alerts}</b>alerts</div><div class="stat"><b>${pct(st.answeredShare)}</b>answered</div><div class="stat"><b>${st.medianAnswerSeconds == null ? '–' : st.medianAnswerSeconds + 's'}</b>median time to answer</div><div class="stat"><b>${pct(st.within30s)}</b>answered within 30s</div><div class="stat"><b>${pct(st.escalatedShare)}</b>tapped 112</div><div class="stat"><b>${st.avgRating == null ? '–' : st.avgRating}</b>average rating</div><div class="stat"><b>${st.protectorsApproved}</b>approved protectors</div><div class="stat"><b>${st.protectorsOnline}</b>online now</div></div>`;
+    body = `<div class="card"><div class="stat"><b>${st.alerts}</b>alerts</div><div class="stat"><b>${pct(st.answeredShare)}</b>answered</div><div class="stat"><b>${st.medianAnswerSeconds == null ? '–' : st.medianAnswerSeconds + 's'}</b>median time to answer</div><div class="stat"><b>${pct(st.within30s)}</b>answered within 30s</div><div class="stat"><b>${pct(st.escalatedShare)}</b>tapped 112</div><div class="stat"><b>${st.avgRating == null ? '–' : st.avgRating}</b>average rating</div><div class="stat"><b>${st.answeredWithout112 == null ? '–' : st.answeredWithout112}</b>answered calls with no 112 confirmed</div><div class="stat"><b>${st.protectorsApproved}</b>approved protectors</div><div class="stat"><b>${st.protectorsOnline}</b>online now</div></div>`;
   }
   return header() + `<div class="tabs">${tabs.map(([k, l]) => `<button class="${S.tab === k ? '' : 'ghost'}" data-action="tab" data-tab="${k}">${esc(l)}</button>`).join('')}</div>${body}`;
 }
 
 function render() {
   const active = document.activeElement;
-  const keep = active && active.id && /^(note|reason|name|email|password|country|languages|bio)$/.test(active.id) ? { id: active.id, v: active.value, s: active.selectionStart } : null;
+  const keep = active && active.id && /^(note|reason|name|email|password|country|languages|bio|experienceType|experienceYears|experienceRef)$/.test(active.id) ? { id: active.id, v: active.value, s: active.selectionStart } : null;
   let html;
   if (S.loading) html = header() + '<div class="card center mute">Loading…</div>';
   else if (!S.user) html = authView();

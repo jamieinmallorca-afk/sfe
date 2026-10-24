@@ -8,7 +8,8 @@ const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const bcrypt = require('bcryptjs');
 const { marked } = require('marked');
-const LEGAL_VERSION = '2026-10-pilot-1';
+const LEGAL_VERSION = '2026-10-pilot-2';
+const CHECKS = ['id', 'record', 'references', 'experience', 'training'];
 
 const PORT = Number(process.env.PORT || 3000);
 const ANSWER_SECONDS = Number(process.env.ANSWER_SECONDS || 30);
@@ -50,7 +51,7 @@ function publicUser(u) {
   if (u.role === 'protector') {
     Object.assign(o, {
       available: !!u.available, languages: u.languages || '', bio: u.bio || '', country: u.country || '',
-      checks: u.checks || {}, rating: u.ratingCount ? +(u.ratingSum / u.ratingCount).toFixed(2) : null,
+      checks: u.checks || {}, experienceType: u.experienceType || '', experienceYears: u.experienceYears || '', experienceRef: u.experienceRef || '', rating: u.ratingCount ? +(u.ratingSum / u.ratingCount).toFixed(2) : null,
       ratingCount: u.ratingCount || 0,
     });
   }
@@ -129,6 +130,8 @@ app.post('/api/signup', (req, res) => {
   if (!name || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Name and a valid email are required' });
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
   if (db.users.find((u) => u.email === email)) return res.status(409).json({ error: 'Email already registered' });
+  if (role === 'protector' && (!clean(req.body.experienceType, 80) || !clean(req.body.experienceRef, 200)))
+    return res.status(400).json({ error: 'Protectors must give their relevant experience and a reference who can confirm it' });
   if (req.body.acceptTerms !== true) return res.status(400).json({ error: 'Please confirm you are 18 or over and accept the Terms of Use and Privacy Notice' });
   if (role === 'protector' && req.body.acceptAgreement !== true) return res.status(400).json({ error: 'Please accept the Protector Agreement' });
   const u = {
@@ -140,7 +143,8 @@ app.post('/api/signup', (req, res) => {
   if (role === 'protector') {
     Object.assign(u, {
       languages: clean(req.body.languages, 100), bio: clean(req.body.bio, 500), country: clean(req.body.country, 60),
-      available: false, checks: { id: false, record: false, references: false, training: false }, ratingSum: 0, ratingCount: 0,
+      available: false, checks: { id: false, record: false, references: false, experience: false, training: false }, ratingSum: 0, ratingCount: 0,
+      experienceType: clean(req.body.experienceType, 80), experienceYears: clean(req.body.experienceYears, 10), experienceRef: clean(req.body.experienceRef, 200),
     });
   }
   db.users.push(u);
@@ -281,7 +285,7 @@ app.post('/api/alerts/:id/accept', auth, need('protector'), (req, res) => {
   push(a.callerId, { type: 'accepted', alertId: a.id, protector: first(req.user.name) });
   for (const uid of a.notified) if (uid !== req.user.id) push(uid, { type: 'taken', alertId: a.id, reason: 'taken' });
   const caller = userById(a.callerId);
-  res.json({ alertId: a.id, caller: first(caller.name), note: a.note, location: a.location });
+  res.json({ alertId: a.id, caller: first(caller.name), note: a.note, location: a.location, called112: !!(a.called112 || a.escalated) });
 });
 
 app.post('/api/alerts/:id/decline', auth, need('protector'), (req, res) => res.json({ ok: true }));
@@ -302,10 +306,20 @@ app.post('/api/alerts/:id/location', auth, need('caller'), (req, res) => {
 app.post('/api/alerts/:id/escalate', auth, need('caller'), (req, res) => {
   const a = getAlert(req, res); if (!a) return;
   if (a.callerId !== req.user.id) return res.status(403).json({ error: 'Not allowed' });
-  a.escalated = true;
+  a.escalated = true; a.called112 = true;
   a.escalatedAt = a.escalatedAt || now();
   save();
   if (a.acceptedBy) push(a.acceptedBy, { type: 'escalated', alertId: a.id });
+  res.json({ ok: true });
+});
+
+// Caller confirms they have already called 112 (so protectors know to support, not replace, the call).
+app.post('/api/alerts/:id/called112', auth, need('caller'), (req, res) => {
+  const a = getAlert(req, res); if (!a) return;
+  if (a.callerId !== req.user.id) return res.status(403).json({ error: 'Not allowed' });
+  a.called112 = true; a.called112At = a.called112At || now();
+  save();
+  if (a.acceptedBy) push(a.acceptedBy, { type: 'called112', alertId: a.id });
   res.json({ ok: true });
 });
 
@@ -356,7 +370,7 @@ app.post('/api/admin/users/:id/checks', auth, need('admin'), (req, res) => {
   const u = userById(req.params.id);
   if (!u || u.role !== 'protector') return res.status(404).json({ error: 'Not found' });
   u.checks = u.checks || {};
-  for (const k of ['id', 'record', 'references', 'training']) if (k in req.body) u.checks[k] = !!req.body[k];
+  for (const k of CHECKS) if (k in req.body) u.checks[k] = !!req.body[k];
   save();
   res.json(publicUser(u));
 });
@@ -367,7 +381,7 @@ app.post('/api/admin/users/:id/:action', auth, need('admin'), (req, res) => {
   if (!['approve', 'reject', 'suspend', 'reinstate'].includes(act)) return res.status(404).json({ error: 'Unknown action' });
   if (act === 'approve') {
     const c = u.checks || {};
-    if (!(c.id && c.record && c.references && c.training)) return res.status(400).json({ error: 'All four vetting checks must be completed before approval' });
+    if (!CHECKS.every((k) => c[k])) return res.status(400).json({ error: 'All five vetting checks must be completed before approval' });
     u.status = 'approved';
   } else if (act === 'reject') { u.status = 'rejected'; u.available = false; }
   else if (act === 'suspend') {
@@ -400,6 +414,7 @@ app.get('/api/admin/stats', auth, need('admin'), (req, res) => {
     answeredShare: A.length ? +(answered.length / A.length).toFixed(2) : null,
     within30s: answered.length ? +(waits.filter((w) => w <= 30).length / answered.length).toFixed(2) : null,
     medianAnswerSeconds: med == null ? null : +med.toFixed(1),
+    answeredWithout112: answered.filter((a) => !a.called112 && !a.escalated).length,
     escalatedTo112: A.filter((a) => a.escalated).length,
     escalatedShare: A.length ? +(A.filter((a) => a.escalated).length / A.length).toFixed(2) : null,
     avgRating: rated.length ? +(rated.reduce((s, a) => s + a.rating, 0) / rated.length).toFixed(2) : null,

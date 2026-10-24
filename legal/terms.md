@@ -2,11 +2,11 @@
 
 ## What sfe is and is not
 
-sfe is a pilot service, run by [legal name of the company] ("we"), that lets you talk by voice with a vetted volunteer when you feel unsafe or want someone to talk to. By using sfe you agree to these terms.
+sfe is a pilot service, run by [name of the non-profit association] ("we"), that lets you talk by voice with a vetted volunteer while you wait for help to arrive, when you feel unsafe or want someone to talk to. By using sfe you agree to these terms.
 
-**sfe is not an emergency service.** It does not send police, ambulances or any other help to you. If you or anyone else is in danger or needs medical help, call 112 first.
+**sfe is not an emergency service.** It does not send police, ambulances or any other help to you. If you or anyone else is in danger or needs medical help, **call 112 first**, then use sfe to have someone with you by voice until help arrives. The app will ask whether you have called 112.
 
-Protectors are volunteers. They are not police officers, doctors, counsellors or lawyers, and they cannot give professional advice.
+Protectors are volunteers. Even if they have a background in the police, military or emergency services, they are not acting as police officers, doctors, counsellors or lawyers on sfe, they have no official powers, and they cannot give professional advice.
 
 ## Who can use sfe and how
 
@@ -32,9 +32,9 @@ If you or anyone else is in danger or needs medical help, call **112**. In Spain
 
 ## Protectors
 
-Protectors are unpaid volunteers. Before taking calls they complete identity verification, a criminal-record declaration, two reference checks and training. These checks reduce risk but cannot remove it, and we cannot guarantee any protector's judgment or advice.
+Protectors are unpaid volunteers. Before taking calls they complete identity verification, a criminal-record declaration, two reference checks, verification of relevant experience (for example in the police, military, emergency services or crisis support) and training. These checks reduce risk but cannot remove it, and we cannot guarantee any protector's judgment or advice.
 
-Protectors speak only by voice. They never come to you, never ask for your phone number, address or money, and never speak for the police or any authority. If a protector does any of these things, end the call, call 112 if you are in danger, and report it in the app.
+Protectors speak only by voice. They never come to you, never ask for your phone number, address or money, and never claim to be police or to speak for any authority. If a protector does any of these things, end the call, call 112 if you are in danger, and report it in the app.
 
 After a call you can rate the protector and report a problem. Our safety team reviews every report.
 

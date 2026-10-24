@@ -2,18 +2,20 @@
 
 ## Parties and purpose
 
-This agreement is between [legal name of the organisation running sfe], tax ID [CIF], [address] ("sfe"), and you, the person who accepts it when joining sfe as a protector ("you").
+This agreement is between [name of the non-profit association running sfe], tax ID [CIF], [address] ("sfe"), and you, the person who accepts it when joining sfe as a protector ("you").
 
-You offer some of your free time to talk by voice with people who feel unsafe or need someone to talk to, through the sfe app and under the rules below.
+You offer some of your free time to stay with people by voice while they wait for help to arrive, through the sfe app and under the rules below.
 
 ## Your role
 
-You take voice calls through the app from people who feel unsafe. You listen, help the person feel calmer, ask what is happening and where they are, and help them decide what to do next.
+You take voice calls through the app from people who feel unsafe. Your first question is always whether they have called 112. You listen, help the person feel calmer, ask what is happening and where they are, and help them decide what to do next.
 
 **If the person is in danger or needs medical help, tell them to call 112 straight away. Never delay this.**
 
 You never:
 
+- say or imply that you are police, Guardia Civil, military or any other authority, whatever your background;
+- try to take charge of the situation or give orders;
 - go to the caller's location or arrange to meet;
 - ask for or give phone numbers, social media or any personal contact details;
 - give medical, legal or psychological advice beyond listening and calming;
@@ -27,12 +29,13 @@ You choose when to switch on "Available". [Time commitment: none; you decide.] O
 
 ## Vetting and training
 
-You can take calls only when sfe has completed four checks and approved you:
+You can take calls only when sfe has completed five checks and approved you:
 
 1. **Identity** verified.
 2. **Criminal-record declaration:** you declare in writing that you have no uncancelled convictions for the offences listed in Art. 8.5 of Ley 45/2015. These include domestic or gender violence, crimes against the life, physical integrity, liberty, moral integrity or sexual freedom of a spouse or children, human trafficking, and terrorism [exact wording to be confirmed].
 3. **Two references** checked.
-4. **Training completed:** [2 hours] on de-escalation, listening, when to say "call 112 now", boundaries and data protection, with a short test and supervised first calls.
+4. **Relevant experience verified:** you have current or former experience in the police, military, emergency services, paramedic or fire services, or similar crisis work. You tell us the type of service and years, give a reference who can confirm it, and may be asked to show a service card or certificate. We record only that it was verified [serving staff: employer permission to be confirmed with the lawyer].
+5. **Training completed:** [2 hours] on de-escalation, listening, when to say "call 112 now", boundaries and data protection, with a short test and supervised first calls.
 
 You must be at least 21. Tell us promptly if anything you declared changes. We repeat the checks every 12 months. We keep only a record that each check was completed, not copies of your documents.
 

@@ -49,10 +49,10 @@ const ok = (name) => { passed++; console.log('  ok  ' + name); };
   assert.equal(r.status, 409); ok('duplicate email rejected');
   r = await api('/signup', null, { name: 'Bad', email: 'bad@x.com', password: 'short', acceptTerms: true });
   assert.equal(r.status, 400); ok('short password rejected');
-  r = await api('/signup', null, { name: 'Pablo Protector', email: 'pablo@x.com', password: 'password1', role: 'protector', languages: 'es,en', acceptTerms: true, acceptAgreement: true });
+  r = await api('/signup', null, { name: 'Pablo Protector', email: 'pablo@x.com', password: 'password1', role: 'protector', languages: 'es,en', acceptTerms: true, acceptAgreement: true, experienceType: 'Firefighter', experienceYears: '10', experienceRef: 'Chief X 600000000' });
   const pabloTok = r.body.token, pabloId = r.body.user.id;
   assert.equal(r.body.user.status, 'pending'); ok('protector starts as pending');
-  r = await api('/signup', null, { name: 'Marta Protector', email: 'marta@x.com', password: 'password1', role: 'protector', acceptTerms: true, acceptAgreement: true });
+  r = await api('/signup', null, { name: 'Marta Protector', email: 'marta@x.com', password: 'password1', role: 'protector', acceptTerms: true, acceptAgreement: true, experienceType: 'Firefighter', experienceYears: '10', experienceRef: 'Chief X 600000000' });
   const martaTok = r.body.token, martaId = r.body.user.id;
 
   r = await api('/protector/available', pabloTok, { available: true });
@@ -64,9 +64,9 @@ const ok = (name) => { passed++; console.log('  ok  ' + name); };
   r = await api('/login', null, { email: 'admin@sfe.local', password: 'test-admin-pass' });
   const admin = r.body.token;
   r = await api('/admin/users/' + pabloId + '/approve', admin, {});
-  assert.equal(r.status, 400); ok('approval blocked until all four checks are done');
+  assert.equal(r.status, 400); ok('approval blocked until all five checks are done');
   for (const id of [pabloId, martaId]) {
-    for (const k of ['id', 'record', 'references', 'training']) await api('/admin/users/' + id + '/checks', admin, { [k]: true });
+    for (const k of ['id', 'record', 'references', 'experience', 'training']) await api('/admin/users/' + id + '/checks', admin, { [k]: true });
     r = await api('/admin/users/' + id + '/approve', admin, {});
     assert.equal(r.body.status, 'approved');
   }
@@ -105,6 +105,9 @@ const ok = (name) => { passed++; console.log('  ok  ' + name); };
   r = await api('/alerts/' + alertId + '/escalate', caller, {}); assert.equal(r.status, 200);
   await waitFor(winnerWs, 'escalated'); ok('112 tap logged and shown to protector');
 
+  r = await api('/alerts/' + alertId + '/called112', caller, {}); assert.equal(r.status, 200);
+  await waitFor(winnerWs, 'called112'); ok('caller confirms 112 called, protector told');
+
   // --- end, rate, report
   const winnerTok = accA.status === 200 ? pabloTok : martaTok;
   r = await api('/alerts/' + alertId + '/end', winnerTok, {}); assert.equal(r.body.status, 'ended');
@@ -142,6 +145,8 @@ const ok = (name) => { passed++; console.log('  ok  ' + name); };
   assert.ok(capped); ok('hourly alert cap enforced');
 
   // --- consent, export, delete, retention, legal pages
+  r = await api('/signup', null, { name: 'No Exp', email: 'ne@x.com', password: 'password1', role: 'protector', acceptTerms: true, acceptAgreement: true });
+  assert.equal(r.status, 400); ok('protector sign-up refused without experience details');
   r = await api('/signup', null, { name: 'No Consent', email: 'nc@x.com', password: 'password1' });
   assert.equal(r.status, 400); ok('sign-up refused without accepting terms');
   r = await api('/signup', null, { name: 'No Agree', email: 'na@x.com', password: 'password1', role: 'protector', acceptTerms: true });

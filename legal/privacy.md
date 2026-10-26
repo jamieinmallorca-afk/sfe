@@ -18,6 +18,7 @@ This notice explains what we collect, why, who sees it, how long we keep it and 
 | Alert record: time, who answered, call length, whether you tapped 112, outcome | Callers, protectors | Run the service, protect safety, measure the pilot, handle complaints | Our legitimate interest in a safe and working service (Art. 6.1.f) |
 | Ratings and reports about a call | Callers, protectors | Keep people safe and investigate misconduct | Legitimate interest (Art. 6.1.f) |
 | Country, languages, short bio, relevant experience (type of service, years, a reference contact) and vetting status (ID, criminal-record declaration, references, experience, training) | Protectors | Decide whether you can become a protector and keep callers safe | Steps to join (Art. 6.1.b) and legitimate interest (Art. 6.1.f). Criminal-record data only as the law allows |
+| Email confirmation and password-reset links, sent to your email address, and (if you choose it) the name and email Google gives us when you sign in with Google | Everyone | Check that the email is yours, let you recover your account, and sign you in | Providing the service you ask for (Art. 6.1.b) and legitimate interest in preventing fake accounts (Art. 6.1.f) |
 | Technical data such as device type and IP address in server and hosting logs | Everyone | Security, stop abuse, make the voice connection work | Legitimate interest (Art. 6.1.f) |
 
 We do not keep copies of ID documents, service records or criminal-record paperwork in the app. We record only that a check was completed.
@@ -39,6 +40,7 @@ Your note is saved with the alert record. Before a protector answers, all availa
 - **Protectors.** Before one answers, every available protector sees your first name and your note. The protector who answers also sees your location, if you shared it. They never see your email, surname or phone number, and you never see theirs.
 - **The sfe team.** Our administrators see accounts, vetting status, alert records and reports. Access is limited to people who need it to run the service and keep people safe [list roles].
 - **Hosting and service providers.** Railway hosts the app and acts on our instructions under a data processing agreement [confirm].
+- **Email and sign-in providers.** Resend sends our confirmation and password-reset emails, and Google provides "Continue with Google" if you use it. Both receive your email address and act under their own terms [confirm data processing agreements and transfer mechanism].
 - **Authorities.** Only if the law requires it or someone's life is at risk.
 
 ## Where data is stored and how long we keep it

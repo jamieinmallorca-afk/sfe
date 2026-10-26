@@ -62,7 +62,7 @@ const store = {
 const S = {
   token: store.get('sfe_token'), user: null, config: { iceServers: [], answerSeconds: 30 }, ws: null, wsRetry: 0,
   online: 0, authMode: 'login', authRole: 'caller', error: '', tab: 'apps', admin: {}, incoming: [], call: null,
-  shareLoc: true, note: '', pc: null, stream: null, muted: false, queued: [], watchId: null, lastLocPost: 0, tick: null, beep: null, loading: true,
+  shareLoc: true, note: '', info: '', reset: null, googlePending: null, pc: null, stream: null, muted: false, queued: [], watchId: null, lastLocPost: 0, tick: null, beep: null, loading: true,
 };
 
 async function api(path, method, body) {
@@ -211,11 +211,37 @@ function getPositionOnce() {
 
 /* ---------- actions ---------- */
 const actions = {
-  async switchAuth(el) { S.authMode = el.dataset.mode; S.error = ''; render(); },
-  async setRole(el) { S.authRole = el.dataset.role; render(); },
-  async submitAuth() {
+  async switchAuth(el) { S.authMode = el.dataset.mode; S.error = ''; S.info = ''; render(); },
+  async setRole(el) { if (S.googlePending) S.googlePending.name = (document.getElementById('name') || {}).value || S.googlePending.name; S.authRole = el.dataset.role; render(); },
+  async sendForgot() {
+    S.error = '';
+    try { await api('/forgot', 'POST', { email: (document.getElementById('email') || {}).value || '' }); S.info = 'If that email has an account, we have sent a link. Check your inbox and spam folder.'; }
+    catch (e) { S.error = e.message; }
+    render();
+  },
+  async doReset() {
+    S.error = '';
+    try { await api('/reset', 'POST', { token: S.reset, password: (document.getElementById('password') || {}).value || '' }); S.reset = null; S.authMode = 'login'; S.info = 'Password changed. Log in with your new password.'; }
+    catch (e) { S.error = e.message; }
+    render();
+  },
+  async resendVerify() {
+    try { await api('/resend-verification', 'POST', {}); S.info = 'We have sent a new confirmation email. Check your inbox and spam folder.'; S.error = ''; }
+    catch (e) { S.error = e.message; }
+    render();
+  },
+  async cancelGoogle() { S.googlePending = null; S.error = ''; render(); },
+  async completeGoogle() {
     const v = (id) => (document.getElementById(id) || {}).value || '';
     S.error = '';
+    try {
+      const r = await api('/google/complete', 'POST', { token: S.googlePending.token, name: v('name'), role: S.authRole, languages: v('languages'), country: v('country'), bio: v('bio'), experienceType: v('experienceType'), experienceYears: v('experienceYears'), experienceRef: v('experienceRef'), acceptTerms: !!S.acceptTerms, acceptAgreement: !!S.acceptAgreement });
+      S.googlePending = null; S.token = r.token; store.set('sfe_token', r.token); await boot();
+    } catch (e) { S.error = e.message; render(); }
+  },
+  async submitAuth() {
+    const v = (id) => (document.getElementById(id) || {}).value || '';
+    S.error = ''; S.info = '';
     try {
       const body = S.authMode === 'login'
         ? { email: v('email'), password: v('password') }
@@ -242,9 +268,10 @@ const actions = {
   },
   async deleteAccount() {
     if (!confirm('Delete your sfe account and personal data? This cannot be undone.')) return;
-    const pw = prompt('Type your password to confirm');
+    const np = S.user.noPassword;
+    const pw = prompt(np ? 'Type your email address to confirm' : 'Type your password to confirm');
     if (!pw) return;
-    try { await api('/me/delete', 'POST', { password: pw }); alert('Your account has been deleted.'); await actions.logout(); }
+    try { await api('/me/delete', 'POST', np ? { confirmEmail: pw } : { password: pw }); alert('Your account has been deleted.'); await actions.logout(); }
     catch (e) { S.error = e.message; render(); }
   },
   async toggleLoc(el) { S.shareLoc = el.checked; },
@@ -332,6 +359,19 @@ async function loadAdmin() {
 async function boot() {
   S.loading = true; render();
   try { S.config = await api('/config'); } catch {}
+  {
+    const q = new URLSearchParams(location.search), hh = new URLSearchParams(location.hash.slice(1));
+    if (hh.get('token')) { S.token = hh.get('token'); store.set('sfe_token', S.token); }
+    if (hh.get('google')) {
+      try { const p = await api('/google/pending?token=' + encodeURIComponent(hh.get('google'))); S.googlePending = { token: hh.get('google'), ...p }; S.authRole = 'caller'; }
+      catch (e) { S.error = e.message; }
+    }
+    if (q.get('reset')) S.reset = q.get('reset');
+    if (q.get('verified') === '1') S.info = 'Email confirmed. Thank you.';
+    if (q.get('verified') === '0') S.error = 'That confirmation link has expired. Log in and ask for a new one.';
+    if (q.get('gerror')) S.error = 'Google sign-in did not work. Please try again.';
+    if (location.search || location.hash) history.replaceState(null, '', location.pathname);
+  }
   if (S.token) {
     try { await refreshMe(); connectWS(); if (S.user.role === 'admin') await loadAdmin(); }
     catch (e) { S.token = null; store.set('sfe_token', null); S.user = null; }
@@ -346,29 +386,68 @@ const mapLink = (l) => l ? `<a class="btn ghost small" target="_blank" rel="noop
 function header() {
   return `<header><div class="logo">sfe</div>${S.user ? `<div class="row auto"><span class="mute small">${esc(S.user.name)}</span><button class="ghost small auto" data-action="logout">Log out</button></div>` : ''}</header>`;
 }
-const legalLinks = () => `<p class="small mute center" style="margin-top:8px"><a href="/privacy" target="_blank">Privacy</a> · <a href="/terms" target="_blank">Terms</a>${S.user && S.user.role === 'protector' ? ' · <a href="/protector-agreement" target="_blank">Protector Agreement</a>' : ''}${S.user && S.user.role !== 'admin' ? ` · <a href="#" data-action="exportData">Download my data</a> · <a href="#" data-action="deleteAccount">Delete account</a>` : ''}<br>Closed pilot test. Not an emergency service.</p>`;
+const legalLinks = () => `<p class="small mute center" style="margin-top:8px"><a href="/privacy" target="_blank">Privacy</a> · <a href="/terms" target="_blank">Terms</a>${S.user && S.user.role === 'protector' ? ' · <a href="/protector-agreement" target="_blank">Protector Agreement</a>' : ''}${S.config.donateUrl ? ` · <a href="${esc(S.config.donateUrl)}" target="_blank" rel="noopener noreferrer">Support sfe</a>` : ''}${S.user && S.user.role !== 'admin' ? ` · <a href="#" data-action="exportData">Download my data</a> · <a href="#" data-action="deleteAccount">Delete account</a>` : ''}<br>Closed pilot test. Not an emergency service.</p>`;
 const notice112 = `<p class="small mute">sfe supports 112. It does not replace it. In an emergency, call 112 first.</p>` ;
 
+const protFields = () => `<label for="country">Country</label><input id="country"><label for="languages">Languages you speak</label><input id="languages" placeholder="e.g. Spanish, English, German"><label for="experienceType">Relevant experience</label><select id="experienceType"><option value="">Choose…</option><option>Police / Guardia Civil</option><option>Military</option><option>Firefighter</option><option>Paramedic / ambulance</option><option>Other emergency service</option><option>Crisis line / social work</option><option>Other</option></select><label for="experienceYears">Years of experience</label><input id="experienceYears" inputmode="numeric"><label for="experienceRef">Someone who can confirm it (name and phone or email)</label><input id="experienceRef"><label for="bio">Why do you want to help? Any relevant training?</label><textarea id="bio"></textarea><p class="small mute">New protectors are vetted before they can take calls: ID check, a written criminal-record declaration, references, proof of relevant emergency-services, military or similar experience, and a short training.</p>`;
+const consentBoxes = (prot) => `<label class="check"><input type="checkbox" data-action="toggleTerms" ${S.acceptTerms ? 'checked' : ''}> <span class="small">I am 18 or over and accept the <a href="/terms" target="_blank">Terms of Use</a> and <a href="/privacy" target="_blank">Privacy Notice</a>.</span></label>${prot ? `<label class="check"><input type="checkbox" data-action="toggleAgree" ${S.acceptAgreement ? 'checked' : ''}> <span class="small">I accept the <a href="/protector-agreement" target="_blank">Protector Agreement</a>, including the criminal-record declaration.</span></label>` : ''}`;
+const infoBox = () => (S.info ? `<p class="small" style="color:var(--ok,#1a7f4b);margin:8px 0">${esc(S.info)}</p>` : '');
+const googleBtn = () => (S.config.googleEnabled ? `<div class="center small mute" style="margin:12px 0 4px">or</div><a class="btn ghost" style="width:100%" href="/auth/google">Continue with Google</a>` : '');
+const roleToggle = (prot) => `<div class="row" style="margin:10px 0"><button class="${prot ? 'ghost' : ''}" data-action="setRole" data-role="caller">I need support</button><button class="${prot ? '' : 'ghost'}" data-action="setRole" data-role="protector">I want to be a protector</button></div>`;
+
+function forgotView() {
+  return header() + `<div class="card"><h1>Reset your password</h1><p class="mute">Enter your email and we will send you a link.</p>
+    <label for="email">Email</label><input id="email" type="email" autocomplete="email">
+    ${infoBox()}${S.error ? `<div class="err">${esc(S.error)}</div>` : ''}
+    <div style="margin-top:14px"><button style="width:100%" data-action="sendForgot">Send link</button></div>
+    <p class="center small" style="margin-top:12px"><a href="#" data-action="switchAuth" data-mode="login">Back to log in</a></p></div>${notice112}`;
+}
+function resetView() {
+  return header() + `<div class="card"><h1>Choose a new password</h1>
+    <label for="password">New password (8+ characters)</label><input id="password" type="password" autocomplete="new-password">
+    ${S.error ? `<div class="err">${esc(S.error)}</div>` : ''}
+    <div style="margin-top:14px"><button style="width:100%" data-action="doReset">Save password</button></div></div>${notice112}`;
+}
+function googleView() {
+  const g = S.googlePending, prot = S.authRole === 'protector';
+  return header() + `<div class="card"><h1>Almost there</h1><p class="mute">Signed in with Google as <b>${esc(g.email)}</b>. Tell us how you will use sfe.</p>
+    ${roleToggle(prot)}
+    <label for="name">Your name</label><input id="name" value="${esc(g.name)}">
+    ${prot ? protFields() : ''}
+    ${consentBoxes(prot)}
+    ${S.error ? `<div class="err">${esc(S.error)}</div>` : ''}
+    <div style="margin-top:14px"><button style="width:100%" data-action="completeGoogle">Create account</button></div>
+    <p class="center small" style="margin-top:12px"><a href="#" data-action="cancelGoogle">Cancel</a></p></div>${notice112}`;
+}
+
 function authView() {
+  if (S.reset) return resetView();
+  if (S.googlePending) return googleView();
+  if (S.authMode === 'forgot') return forgotView();
   const login = S.authMode === 'login', prot = S.authRole === 'protector';
   return header() + `
   <div class="card">
     <h1>${login ? 'Welcome back' : 'Create your account'}</h1>
     <p class="mute">A calm voice from a vetted person, whenever you feel unsafe.</p>
-    ${!login ? `<div class="row" style="margin:10px 0"><button class="${prot ? 'ghost' : ''}" data-action="setRole" data-role="caller">I need support</button><button class="${prot ? '' : 'ghost'}" data-action="setRole" data-role="protector">I want to be a protector</button></div>` : ''}
+    ${infoBox()}
+    ${!login ? roleToggle(prot) : ''}
     ${!login ? `<label for="name">Your name</label><input id="name" autocomplete="name">` : ''}
     <label for="email">Email</label><input id="email" type="email" autocomplete="email">
     <label for="password">Password ${login ? '' : '(8+ characters)'}</label><input id="password" type="password" autocomplete="${login ? 'current-password' : 'new-password'}">
-    ${!login && prot ? `<label for="country">Country</label><input id="country"><label for="languages">Languages you speak</label><input id="languages" placeholder="e.g. Spanish, English, German"><label for="experienceType">Relevant experience</label><select id="experienceType"><option value="">Choose…</option><option>Police / Guardia Civil</option><option>Military</option><option>Firefighter</option><option>Paramedic / ambulance</option><option>Other emergency service</option><option>Crisis line / social work</option><option>Other</option></select><label for="experienceYears">Years of experience</label><input id="experienceYears" inputmode="numeric"><label for="experienceRef">Someone who can confirm it (name and phone or email)</label><input id="experienceRef"><label for="bio">Why do you want to help? Any relevant training?</label><textarea id="bio"></textarea><p class="small mute">New protectors are vetted before they can take calls: ID check, a written criminal-record declaration, references, proof of relevant emergency-services, military or similar experience, and a short training.</p>` : ''}
-    ${!login ? `<label class="check"><input type="checkbox" data-action="toggleTerms" ${S.acceptTerms ? 'checked' : ''}> <span class="small">I am 18 or over and accept the <a href="/terms" target="_blank">Terms of Use</a> and <a href="/privacy" target="_blank">Privacy Notice</a>.</span></label>` : ''}
-    ${!login && prot ? `<label class="check"><input type="checkbox" data-action="toggleAgree" ${S.acceptAgreement ? 'checked' : ''}> <span class="small">I accept the <a href="/protector-agreement" target="_blank">Protector Agreement</a>, including the criminal-record declaration.</span></label>` : ''}
+    ${!login && prot ? protFields() : ''}
+    ${!login ? consentBoxes(prot) : ''}
     ${S.error ? `<div class="err">${esc(S.error)}</div>` : ''}
     <div style="margin-top:14px"><button style="width:100%" data-action="submitAuth">${login ? 'Log in' : 'Sign up'}</button></div>
-    <p class="center small" style="margin-top:12px">${login ? `New here? <a href="#" data-action="switchAuth" data-mode="signup">Create an account</a>` : `Have an account? <a href="#" data-action="switchAuth" data-mode="login">Log in</a>`}</p>
+    ${googleBtn()}
+    <p class="center small" style="margin-top:12px">${login ? `New here? <a href="#" data-action="switchAuth" data-mode="signup">Create an account</a> · <a href="#" data-action="switchAuth" data-mode="forgot">Forgot password?</a>` : `Have an account? <a href="#" data-action="switchAuth" data-mode="login">Log in</a>`}</p>
   </div>${notice112}`;
 }
 
+function verifyCard() {
+  return `<div class="card" style="border-color:var(--sos);border-width:2px"><h2>Confirm your email</h2><p class="small mute">We sent a link to <b>${esc(S.user.email)}</b>. Open it to start using sfe. Check your spam folder too.</p>${infoBox()}${S.error ? `<div class="err">${esc(S.error)}</div>` : ''}<button class="ghost" data-action="resendVerify">Send the email again</button></div>`;
+}
 function callerHome() {
+  if (!S.user.emailVerified) return header() + verifyCard() + `<div class="card center"><h2>In danger?</h2><p class="mute">sfe is not an emergency service. Call 112 first.</p></div>` + notice112 + `<div class="sticky"><div class="in"><a class="btn e112" style="width:100%" href="tel:112">In danger or need medical help? Call 112</a></div></div>`;
   return header() + `
   <div class="card center">
     <h1>Feeling unsafe?</h1>
@@ -423,12 +502,16 @@ function callView() {
       <h2 style="margin-top:14px">Something wrong?</h2>
       ${c.reported ? '<p>Thanks. Our team will review your report.</p>' : `<textarea id="reason" placeholder="Describe what happened. Reports are reviewed by our safety team." maxlength="500"></textarea><button class="ghost" style="margin-top:8px" data-action="report">Send report</button>`}
       ${S.error ? `<div class="err">${esc(S.error)}</div>` : ''}
-      <div style="margin-top:14px"><button style="width:100%" data-action="done">Done</button></div></div>${caller ? `<div class="card">${e112.replace('data-action="call112"', '')}</div>` : ''}`;
+      <div style="margin-top:14px"><button style="width:100%" data-action="done">Done</button></div></div>${caller ? `<div class="card">${e112.replace('data-action="call112"', '')}</div>` : ''}${S.config.donateUrl ? `<p class="small mute center">sfe is run by volunteers. If it helped, <a href="${esc(S.config.donateUrl)}" target="_blank" rel="noopener noreferrer">you can support it</a>. Never expected.</p>` : ''}`;
   }
   return header() + '<div class="card">…</div>';
 }
 
 function protectorHome() {
+  const inner = protectorHomeInner();
+  return S.user.emailVerified ? inner : inner.replace('</header>', '</header>' + verifyCard());
+}
+function protectorHomeInner() {
   const u = S.user;
   if (u.status === 'pending') {
     const c = u.checks || {};
@@ -454,7 +537,7 @@ function adminView() {
   let body = '';
   if (S.tab === 'apps') {
     const pend = users.filter((u) => u.status === 'pending');
-    body = (S.error ? `<div class="err">${esc(S.error)}</div>` : '') + (pend.length ? pend.map((u) => `<div class="card"><h2>${esc(u.name)}</h2><p class="small mute">${esc(u.email)} · ${esc(u.country)} · ${esc(u.languages)}</p><p class="small mute">Agreement accepted: ${u.acceptedAgreement ? new Date(u.acceptedAgreement.at).toLocaleString() + ' (' + esc(u.acceptedAgreement.version) + ')' : 'not recorded'}</p><p class="small"><b>Experience:</b> ${esc(u.experienceType)}${u.experienceYears ? ', ' + esc(u.experienceYears) + ' yrs' : ''} · Ref: ${esc(u.experienceRef)}</p><p class="small">${esc(u.bio)}</p>
+    body = (S.error ? `<div class="err">${esc(S.error)}</div>` : '') + (pend.length ? pend.map((u) => `<div class="card"><h2>${esc(u.name)}</h2><p class="small mute">${esc(u.email)} ${u.emailVerified ? '✅ confirmed' : '⚠ not confirmed'} · ${esc(u.country)} · ${esc(u.languages)}</p><p class="small mute">Agreement accepted: ${u.acceptedAgreement ? new Date(u.acceptedAgreement.at).toLocaleString() + ' (' + esc(u.acceptedAgreement.version) + ')' : 'not recorded'}</p><p class="small"><b>Experience:</b> ${esc(u.experienceType)}${u.experienceYears ? ', ' + esc(u.experienceYears) + ' yrs' : ''} · Ref: ${esc(u.experienceRef)}</p><p class="small">${esc(u.bio)}</p>
       ${chk(u, 'id', 'Identity verified')}${chk(u, 'record', 'Criminal-record declaration checked')}${chk(u, 'references', 'Two references checked')}${chk(u, 'experience', 'Relevant experience verified')}${chk(u, 'training', 'Training completed')}
       <div class="row" style="margin-top:10px"><button data-action="adminAct" data-act="approve" data-id="${esc(u.id)}">Approve</button><button class="ghost" data-action="adminAct" data-act="reject" data-id="${esc(u.id)}">Reject</button></div></div>`).join('') : '<div class="card mute">No applications waiting.</div>');
   } else if (S.tab === 'people') {
@@ -499,6 +582,9 @@ setInterval(() => {
   }
 }, 1000);
 
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && S.user && !S.user.emailVerified && S.token) { try { await refreshMe(); render(); } catch {} }
+});
 boot();
 </script>
 </body>

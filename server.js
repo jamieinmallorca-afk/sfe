@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const bcrypt = require('bcryptjs');
 const { marked } = require('marked');
-const LEGAL_VERSION = '2026-10-pilot-2';
+const LEGAL_VERSION = '2026-10-pilot-3';
 const CHECKS = ['id', 'record', 'references', 'experience', 'training'];
 
 const PORT = Number(process.env.PORT || 3000);
@@ -16,13 +16,19 @@ const ANSWER_SECONDS = Number(process.env.ANSWER_SECONDS || 30);
 const DB_FILE = process.env.DB_FILE || path.join(__dirname, 'db.json');
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'admin@sfe.local').toLowerCase();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'change-me-now';
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const MAIL_FROM = process.env.MAIL_FROM || 'sfe <onboarding@resend.dev>';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const GOOGLE_TOKEN_URL = process.env.GOOGLE_TOKEN_URL || 'https://oauth2.googleapis.com/token';
+const DONATE_URL = /^https:\/\//.test(process.env.DONATE_URL || '') ? process.env.DONATE_URL : '';
 const MAX_ALERTS_PER_HOUR = Number(process.env.MAX_ALERTS_PER_HOUR || 5);
 const ICE_SERVERS = process.env.ICE_SERVERS
   ? JSON.parse(process.env.ICE_SERVERS)
   : [{ urls: 'stun:stun.l.google.com:19302' }];
 
 // ---------- tiny JSON store ----------
-let db = { users: [], alerts: [], reports: [], sessions: {} };
+let db = { users: [], alerts: [], reports: [], sessions: {}, tokens: {} };
 if (fs.existsSync(DB_FILE)) db = Object.assign(db, JSON.parse(fs.readFileSync(DB_FILE, 'utf8')));
 let saveTimer = null;
 function save() {
@@ -30,24 +36,98 @@ function save() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)), 100);
 }
+function flushSave() {
+  if (process.env.NO_PERSIST) return;
+  clearTimeout(saveTimer);
+  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+}
 const now = () => Date.now();
 const id = () => crypto.randomUUID();
 
 if (!db.users.find((u) => u.email === ADMIN_EMAIL)) {
   db.users.push({
     id: id(), name: 'Admin', email: ADMIN_EMAIL, passHash: bcrypt.hashSync(ADMIN_PASSWORD, 10),
-    role: 'admin', status: 'approved', createdAt: now(),
+    role: 'admin', status: 'approved', createdAt: now(), emailVerified: true,
   });
   save();
   if (ADMIN_PASSWORD === 'change-me-now') console.warn('WARNING: default admin password in use. Set ADMIN_PASSWORD.');
 }
 
+{ const adm = db.users.find((u) => u.email === ADMIN_EMAIL); if (adm && !adm.emailVerified) { adm.emailVerified = true; save(); } }
+
 // ---------- helpers ----------
+const sha = (x) => crypto.createHash('sha256').update(String(x)).digest('hex');
+function newToken(type, data, ttlMs) {
+  const t = crypto.randomBytes(24).toString('hex');
+  db.tokens[sha(t)] = { type, ...data, exp: Date.now() + ttlMs };
+  save();
+  return t;
+}
+function takeToken(t, type, consume = true) {
+  const k = sha(t || '');
+  const r = db.tokens[k];
+  if (!r || r.type !== type || r.exp < Date.now()) return null;
+  if (consume) { delete db.tokens[k]; save(); }
+  return r;
+}
+const baseUrl = (req) => (process.env.APP_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.headers.host}`).replace(/\/$/, '');
+const mailOutbox = []; // filled only when MAIL_CAPTURE is set (tests)
+async function sendMail(to, subject, text, extra = {}) {
+  if (process.env.MAIL_CAPTURE) mailOutbox.push({ to, subject, text, ...extra });
+  if (!RESEND_API_KEY) { if (!process.env.NO_PERSIST) console.log(`[email not configured] to=${to} subject=${subject}\n${text}`); return false; }
+  try {
+    const r = await fetch('https://api.resend.com/emails', {
+      method: 'POST', headers: { Authorization: 'Bearer ' + RESEND_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: MAIL_FROM, to: [to], subject, text }),
+    });
+    if (!r.ok) { console.error('Resend error', r.status, (await r.text().catch(() => '')).slice(0, 200)); return false; }
+    return true;
+  } catch (e) { console.error('Email send failed:', e.message); return false; }
+}
+function sendVerification(u, req) {
+  const t = newToken('verify', { userId: u.id }, 24 * 3600 * 1000);
+  const link = `${baseUrl(req)}/verify?token=${t}`;
+  u.lastVerifySent = Date.now();
+  return sendMail(u.email, 'Confirm your email for sfe',
+    `Hi ${first(u.name)},\n\nPlease confirm your email address for sfe by opening this link:\n\n${link}\n\nThe link works for 24 hours. If you did not create an sfe account, ignore this email.\n\nsfe is not an emergency service. In danger, call 112.`, { type: 'verify', link, token: t });
+}
+function startSession(u) {
+  const token = crypto.randomBytes(24).toString('hex');
+  db.sessions[token] = { userId: u.id, at: now() };
+  save();
+  return token;
+}
+const dropSessions = (uid) => { for (const t of Object.keys(db.sessions)) if (db.sessions[t].userId === uid) delete db.sessions[t]; };
+const cookiesOf = (req) => Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).filter((a) => a[0]).map(([k, ...v]) => [k, decodeURIComponent(v.join('='))]));
+
+// Validates role-specific sign-up fields and builds a user. Used by password and Google sign-up.
+function buildUser(body, { name, email, passHash, role, verified, googleSub }) {
+  if (role === 'protector' && (!clean(body.experienceType, 80) || !clean(body.experienceRef, 200)))
+    return { error: 'Protectors must give their relevant experience and a reference who can confirm it' };
+  if (body.acceptTerms !== true) return { error: 'Please confirm you are 18 or over and accept the Terms of Use and Privacy Notice' };
+  if (role === 'protector' && body.acceptAgreement !== true) return { error: 'Please accept the Protector Agreement' };
+  const u = {
+    id: id(), name, email, passHash, role, createdAt: now(),
+    status: role === 'protector' ? 'pending' : 'approved',
+    acceptedTerms: { at: now(), version: LEGAL_VERSION },
+    emailVerified: !!verified || !!(process.env.NO_PERSIST && process.env.TEST_AUTO_VERIFY),
+  };
+  if (googleSub) { u.googleSub = googleSub; u.noPassword = true; }
+  if (role === 'protector') {
+    u.acceptedAgreement = { at: now(), version: LEGAL_VERSION };
+    Object.assign(u, {
+      languages: clean(body.languages, 100), bio: clean(body.bio, 500), country: clean(body.country, 60),
+      available: false, checks: { id: false, record: false, references: false, experience: false, training: false }, ratingSum: 0, ratingCount: 0,
+      experienceType: clean(body.experienceType, 80), experienceYears: clean(body.experienceYears, 10), experienceRef: clean(body.experienceRef, 200),
+    });
+  }
+  return { user: u };
+}
 const first = (name) => String(name || '').trim().split(/\s+/)[0] || 'Someone';
 const clean = (s, n) => String(s == null ? '' : s).trim().slice(0, n);
 const userById = (uid) => db.users.find((u) => u.id === uid);
 function publicUser(u) {
-  const o = { id: u.id, name: u.name, email: u.email, role: u.role, status: u.status, acceptedTerms: u.acceptedTerms || null, acceptedAgreement: u.acceptedAgreement || null };
+  const o = { id: u.id, name: u.name, email: u.email, role: u.role, status: u.status, emailVerified: !!u.emailVerified, noPassword: !!u.noPassword, acceptedTerms: u.acceptedTerms || null, acceptedAgreement: u.acceptedAgreement || null };
   if (u.role === 'protector') {
     Object.assign(o, {
       available: !!u.available, languages: u.languages || '', bio: u.bio || '', country: u.country || '',
@@ -122,36 +202,124 @@ function auth(req, res, next) {
 const need = (...roles) => (req, res, next) =>
   roles.includes(req.user.role) ? next() : res.status(403).json({ error: 'Not allowed' });
 
-app.get('/api/config', (req, res) => res.json({ iceServers: ICE_SERVERS, answerSeconds: ANSWER_SECONDS, legalVersion: LEGAL_VERSION }));
+app.get('/api/config', (req, res) => res.json({ iceServers: ICE_SERVERS, answerSeconds: ANSWER_SECONDS, legalVersion: LEGAL_VERSION, googleEnabled: !!GOOGLE_CLIENT_ID, donateUrl: DONATE_URL }));
 
-app.post('/api/signup', (req, res) => {
+app.post('/api/signup', async (req, res) => {
   const name = clean(req.body.name, 60), email = clean(req.body.email, 120).toLowerCase();
   const password = String(req.body.password || ''), role = req.body.role === 'protector' ? 'protector' : 'caller';
   if (!name || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Name and a valid email are required' });
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
   if (db.users.find((u) => u.email === email)) return res.status(409).json({ error: 'Email already registered' });
-  if (role === 'protector' && (!clean(req.body.experienceType, 80) || !clean(req.body.experienceRef, 200)))
-    return res.status(400).json({ error: 'Protectors must give their relevant experience and a reference who can confirm it' });
-  if (req.body.acceptTerms !== true) return res.status(400).json({ error: 'Please confirm you are 18 or over and accept the Terms of Use and Privacy Notice' });
-  if (role === 'protector' && req.body.acceptAgreement !== true) return res.status(400).json({ error: 'Please accept the Protector Agreement' });
-  const u = {
-    id: id(), name, email, passHash: bcrypt.hashSync(password, 10), role, createdAt: now(),
-    status: role === 'protector' ? 'pending' : 'approved',
-    acceptedTerms: { at: now(), version: LEGAL_VERSION },
-  };
-  if (role === 'protector') u.acceptedAgreement = { at: now(), version: LEGAL_VERSION };
-  if (role === 'protector') {
-    Object.assign(u, {
-      languages: clean(req.body.languages, 100), bio: clean(req.body.bio, 500), country: clean(req.body.country, 60),
-      available: false, checks: { id: false, record: false, references: false, experience: false, training: false }, ratingSum: 0, ratingCount: 0,
-      experienceType: clean(req.body.experienceType, 80), experienceYears: clean(req.body.experienceYears, 10), experienceRef: clean(req.body.experienceRef, 200),
-    });
-  }
+  const built = buildUser(req.body, { name, email, passHash: bcrypt.hashSync(password, 10), role });
+  if (built.error) return res.status(400).json({ error: built.error });
+  const u = built.user;
   db.users.push(u);
-  const token = crypto.randomBytes(24).toString('hex');
-  db.sessions[token] = { userId: u.id, at: now() };
+  const token = startSession(u);
+  if (!u.emailVerified) await sendVerification(u, req);
   save();
   res.json({ token, user: publicUser(u) });
+});
+
+app.get('/verify', (req, res) => {
+  const r = takeToken(String(req.query.token || ''), 'verify');
+  const u = r && userById(r.userId);
+  if (u) { u.emailVerified = true; save(); }
+  res.redirect(u ? '/?verified=1' : '/?verified=0');
+});
+
+app.post('/api/resend-verification', auth, async (req, res) => {
+  const u = req.user;
+  if (u.emailVerified) return res.json({ ok: true, already: true });
+  if (u.lastVerifySent && Date.now() - u.lastVerifySent < 60 * 1000) return res.status(429).json({ error: 'Please wait a minute before asking for another email' });
+  await sendVerification(u, req);
+  save();
+  res.json({ ok: true });
+});
+
+const forgotAttempts = new Map();
+app.post('/api/forgot', async (req, res) => {
+  const email = clean(req.body.email, 120).toLowerCase();
+  const t = Date.now();
+  const arr = (forgotAttempts.get(email) || []).filter((x) => t - x < 3600 * 1000);
+  forgotAttempts.set(email, arr);
+  const u = db.users.find((x) => x.email === email);
+  if (arr.length < 3 && u && u.role !== 'admin' && u.status !== 'suspended') {
+    arr.push(t);
+    const tok = newToken('reset', { userId: u.id }, 3600 * 1000);
+    const link = `${baseUrl(req)}/?reset=${tok}`;
+    await sendMail(u.email, 'Reset your sfe password', `Hi ${first(u.name)},\n\nOpen this link to choose a new password:\n\n${link}\n\nThe link works for one hour. If you did not ask for this, ignore this email and your password stays the same.`, { type: 'reset', link, token: tok });
+  }
+  res.json({ ok: true }); // same answer whether or not the email exists
+});
+
+app.post('/api/reset', (req, res) => {
+  const password = String(req.body.password || '');
+  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  const r = takeToken(String(req.body.token || ''), 'reset');
+  const u = r && userById(r.userId);
+  if (!u) return res.status(400).json({ error: 'This link has expired. Ask for a new one.' });
+  u.passHash = bcrypt.hashSync(password, 10); u.noPassword = false; u.emailVerified = true;
+  dropSessions(u.id);
+  save();
+  res.json({ ok: true });
+});
+
+// ----- Google sign-in (authorisation-code flow) -----
+app.get('/auth/google', (req, res) => {
+  if (!GOOGLE_CLIENT_ID) return res.status(404).send('Google sign-in is not set up');
+  const state = crypto.randomBytes(16).toString('hex');
+  const base = baseUrl(req);
+  res.cookie('sfe_oauth', state, { httpOnly: true, sameSite: 'lax', secure: base.startsWith('https'), maxAge: 10 * 60 * 1000, path: '/auth/google' });
+  const q = new URLSearchParams({ client_id: GOOGLE_CLIENT_ID, redirect_uri: base + '/auth/google/callback', response_type: 'code', scope: 'openid email profile', state, prompt: 'select_account' });
+  res.redirect('https://accounts.google.com/o/oauth2/v2/auth?' + q);
+});
+
+app.get('/auth/google/callback', async (req, res) => {
+  const fail = () => res.redirect('/?gerror=1');
+  if (!GOOGLE_CLIENT_ID || !req.query.state || cookiesOf(req).sfe_oauth !== req.query.state) return res.status(400).send('Sign-in session expired. Go back to sfe and try again.');
+  res.clearCookie('sfe_oauth', { path: '/auth/google' });
+  if (req.query.error || !req.query.code) return fail();
+  try {
+    const r = await fetch(GOOGLE_TOKEN_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ code: String(req.query.code), client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET, redirect_uri: baseUrl(req) + '/auth/google/callback', grant_type: 'authorization_code' }),
+    });
+    const j = await r.json();
+    // the id_token comes straight from Google over TLS, so its claims can be trusted without checking the signature
+    const p = JSON.parse(Buffer.from(String(j.id_token || '').split('.')[1] || '', 'base64url').toString() || '{}');
+    if (!r.ok || p.aud !== GOOGLE_CLIENT_ID || !['https://accounts.google.com', 'accounts.google.com'].includes(p.iss) || p.exp * 1000 < Date.now() || p.email_verified !== true || !p.email) return fail();
+    const email = String(p.email).toLowerCase();
+    let u = db.users.find((x) => x.email === email);
+    if (u) {
+      if (u.role === 'admin' || u.status === 'suspended') return fail();
+      if (!u.emailVerified) { // someone may have registered this address with a password they chose: remove it
+        u.passHash = bcrypt.hashSync(crypto.randomBytes(24).toString('hex'), 10); u.noPassword = true; dropSessions(u.id); u.emailVerified = true;
+      }
+      u.googleSub = u.googleSub || p.sub;
+      return res.redirect('/#token=' + startSession(u));
+    }
+    const t = newToken('gsignup', { email, name: clean(p.name || email.split('@')[0], 60), sub: p.sub }, 15 * 60 * 1000);
+    res.redirect('/#google=' + t);
+  } catch (e) { console.error('Google sign-in failed:', e.message); fail(); }
+});
+
+app.get('/api/google/pending', (req, res) => {
+  const r = takeToken(String(req.query.token || ''), 'gsignup', false);
+  if (!r) return res.status(400).json({ error: 'This sign-up has expired. Please start again.' });
+  res.json({ email: r.email, name: r.name });
+});
+
+app.post('/api/google/complete', (req, res) => {
+  const r = takeToken(String(req.body.token || ''), 'gsignup', false);
+  if (!r) return res.status(400).json({ error: 'This sign-up has expired. Please start again.' });
+  if (db.users.find((x) => x.email === r.email)) return res.status(409).json({ error: 'Email already registered' });
+  const role = req.body.role === 'protector' ? 'protector' : 'caller';
+  const name = clean(req.body.name, 60) || r.name;
+  const built = buildUser(req.body, { name, email: r.email, passHash: bcrypt.hashSync(crypto.randomBytes(24).toString('hex'), 10), role, verified: true, googleSub: r.sub });
+  if (built.error) return res.status(400).json({ error: built.error });
+  db.users.push(built.user);
+  takeToken(String(req.body.token), 'gsignup');
+  res.json({ token: startSession(built.user), user: publicUser(built.user) });
 });
 
 app.post('/api/login', (req, res) => {
@@ -163,10 +331,7 @@ app.post('/api/login', (req, res) => {
     return res.status(401).json({ error: 'Wrong email or password' });
   }
   if (u.status === 'suspended') return res.status(403).json({ error: 'Account suspended' });
-  const token = crypto.randomBytes(24).toString('hex');
-  db.sessions[token] = { userId: u.id, at: now() };
-  save();
-  res.json({ token, user: publicUser(u) });
+  res.json({ token: startSession(u), user: publicUser(u) });
 });
 
 app.post('/api/logout', auth, (req, res) => {
@@ -198,7 +363,7 @@ app.get('/api/me/export', auth, (req, res) => {
 app.post('/api/me/delete', auth, (req, res) => {
   const u = req.user;
   if (u.role === 'admin') return res.status(403).json({ error: 'The admin account cannot be deleted here' });
-  if (!bcrypt.compareSync(String(req.body.password || ''), u.passHash)) return res.status(401).json({ error: 'Wrong password' });
+  if (u.noPassword ? String(req.body.confirmEmail || '').toLowerCase() !== u.email : !bcrypt.compareSync(String(req.body.password || ''), u.passHash)) return res.status(401).json({ error: u.noPassword ? 'Type your email address to confirm' : 'Wrong password' });
   if (db.alerts.find((a) => (a.status === 'ringing' || a.status === 'active') && (a.callerId === u.id || a.acceptedBy === u.id)))
     return res.status(409).json({ error: 'Please end your open call first' });
   // keep anonymous alert totals for pilot statistics, remove everything personal
@@ -208,6 +373,7 @@ app.post('/api/me/delete', auth, (req, res) => {
     if (Array.isArray(a.notified)) a.notified = a.notified.filter((x) => x !== u.id);
   }
   for (const t of Object.keys(db.sessions)) if (db.sessions[t].userId === u.id) delete db.sessions[t];
+  for (const k of Object.keys(db.tokens)) if (db.tokens[k].userId === u.id || db.tokens[k].email === u.email) delete db.tokens[k];
   db.users = db.users.filter((x) => x.id !== u.id);
   save();
   for (const ws of clients.get(u.id) || []) ws.close();
@@ -218,6 +384,7 @@ app.get('/api/availability', auth, (req, res) => res.json({ protectorsOnline: av
 
 // ----- protector -----
 app.post('/api/protector/available', auth, need('protector'), (req, res) => {
+  if (!req.user.emailVerified) return res.status(403).json({ error: 'Please confirm your email first', code: 'email_unverified' });
   if (req.user.status !== 'approved') return res.status(403).json({ error: 'Your application is not approved yet' });
   req.user.available = !!req.body.available;
   save();
@@ -229,6 +396,7 @@ app.post('/api/protector/available', auth, need('protector'), (req, res) => {
 
 // ----- alerts -----
 app.post('/api/alerts', auth, need('caller'), (req, res) => {
+  if (!req.user.emailVerified) return res.status(403).json({ error: 'Please confirm your email first. If you are in danger, call 112.', code: 'email_unverified' });
   if (activeAlertFor(req.user.id) || db.alerts.find((a) => a.callerId === req.user.id && a.status === 'ringing'))
     return res.status(409).json({ error: 'You already have an alert open' });
   const recent = db.alerts.filter((a) => a.callerId === req.user.id && now() - a.createdAt < 3600e3).length;
@@ -380,6 +548,7 @@ app.post('/api/admin/users/:id/:action', auth, need('admin'), (req, res) => {
   const act = req.params.action;
   if (!['approve', 'reject', 'suspend', 'reinstate'].includes(act)) return res.status(404).json({ error: 'Unknown action' });
   if (act === 'approve') {
+    if (!u.emailVerified) return res.status(400).json({ error: 'This protector has not confirmed their email yet' });
     const c = u.checks || {};
     if (!CHECKS.every((k) => c[k])) return res.status(400).json({ error: 'All five vetting checks must be completed before approval' });
     u.status = 'approved';
@@ -432,6 +601,7 @@ function sweep(nowMs = now()) {
   db.alerts = db.alerts.filter((a) => (a.status === 'ringing' || a.status === 'active') || nowMs - a.createdAt < 365 * DAY);
   db.reports = db.reports.filter((r) => !(r.resolved && nowMs - (r.resolvedAt || r.createdAt) > 730 * DAY));
   for (const t of Object.keys(db.sessions)) if (nowMs - db.sessions[t].at > 90 * DAY) delete db.sessions[t];
+  for (const k of Object.keys(db.tokens)) if (db.tokens[k].exp < nowMs) delete db.tokens[k];
   if (db.alerts.length !== nA || db.reports.length !== nR) save();
   return { alerts: nA - db.alerts.length, reports: nR - db.reports.length };
 }
@@ -469,5 +639,9 @@ wss.on('connection', (ws, req) => {
 
 if (require.main === module) {
   server.listen(PORT, () => console.log(`sfe prototype running on http://localhost:${PORT}`));
+  // clean shutdown when the host stops the app (every deploy): save pending data, then exit normally
+  const shutdown = () => { try { flushSave(); } catch (e) { console.error(e.message); } server.close(); process.exit(0); };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
-module.exports = { server, app, db, sweep };
+module.exports = { server, app, db, sweep, mailOutbox };

@@ -47,3 +47,15 @@ answered within 30 s, share that tapped 112, ratings).
 
 - `legal/*.md` are served at `/privacy`, `/terms`, `/protector-agreement`. Edit the markdown, bump `LEGAL_VERSION` in `server.js`, redeploy.
 - Sign-up records acceptance (time + version). Users can download their data and delete their account from the footer. A retention job removes alerts older than 12 months and resolved reports older than 24 months.
+
+## Email, Google sign-in and donations (Railway variables)
+
+| Variable | What it does |
+| --- | --- |
+| `RESEND_API_KEY` | Sends confirmation and password-reset emails (Resend). Without it, links are only printed in the logs. |
+| `MAIL_FROM` | Sender, e.g. `sfe <no-reply@yourdomain>`. Default is Resend's test sender, which only delivers to your own Resend email. |
+| `APP_URL` | Public address, e.g. `https://sfe-production-42f8.up.railway.app`. Used in email links and for Google. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Turn on "Continue with Google". Redirect URI to register: `APP_URL/auth/google/callback`. |
+| `DONATE_URL` | Optional `https://` donation page. Link shows in the footer and after a call. Hidden when empty. |
+
+Accounts must confirm their email before sending alerts or going available. Protectors cannot be approved until confirmed.

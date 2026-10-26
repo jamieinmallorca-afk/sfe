@@ -3,9 +3,13 @@ process.env.NO_PERSIST = '1';
 process.env.ANSWER_SECONDS = '2';
 process.env.ADMIN_PASSWORD = 'test-admin-pass';
 process.env.MAX_ALERTS_PER_HOUR = '6';
+process.env.MAIL_CAPTURE = '1';
+process.env.GOOGLE_CLIENT_ID = 'test-client-id';
+process.env.GOOGLE_CLIENT_SECRET = 'test-secret';
 const assert = require('node:assert/strict');
 const WebSocket = require('ws');
-const { server } = require('./server');
+const http = require('node:http');
+let server, mailOutbox;
 
 let base, wsBase;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -37,7 +41,41 @@ async function waitFor(ws, type, ms = 3000) {
 let passed = 0;
 const ok = (name) => { passed++; console.log('  ok  ' + name); };
 
+// stand-in for Google's token endpoint: the code is just the email name to sign in as
+function mockGoogle() {
+  return new Promise((resolve) => {
+    const s = http.createServer((req, res) => {
+      let body = ''; req.on('data', (d) => (body += d));
+      req.on('end', () => {
+        const p = new URLSearchParams(body); const code = p.get('code');
+        if (p.get('client_secret') !== 'test-secret' || code === 'bad') { res.writeHead(400); return res.end('{}'); }
+        const email = code + (code === 'ana' ? '@x.com' : '@gmail.test');
+        const payload = { iss: 'https://accounts.google.com', aud: 'test-client-id', exp: Math.floor(Date.now() / 1000) + 600, email, email_verified: code !== 'unverifiedgoogle', name: code + ' Google', sub: 'sub-' + code };
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ id_token: 'x.' + Buffer.from(JSON.stringify(payload)).toString('base64url') + '.y' }));
+      });
+    });
+    s.listen(0, () => resolve(s));
+  });
+}
+async function verifyEmail(email) {
+  const m = [...mailOutbox].reverse().find((x) => x.type === 'verify' && x.to === email);
+  assert.ok(m, 'no verification email for ' + email);
+  const r = await fetch(m.link, { redirect: 'manual' });
+  assert.equal(r.status, 302); return r.headers.get('location');
+}
+const google = async (code, expectStatus = 302) => {
+  const a = await fetch(base + '/auth/google', { redirect: 'manual' });
+  const state = new URL(a.headers.get('location')).searchParams.get('state');
+  const cookie = a.headers.get('set-cookie').split(';')[0];
+  const r = await fetch(base + '/auth/google/callback?code=' + code + '&state=' + state, { redirect: 'manual', headers: { cookie } });
+  assert.equal(r.status, expectStatus); return r;
+};
+
 (async () => {
+  const gs = await mockGoogle();
+  process.env.GOOGLE_TOKEN_URL = 'http://127.0.0.1:' + gs.address().port + '/token';
+  ({ server, mailOutbox } = require('./server'));
   await new Promise((r) => server.listen(0, r));
   const port = server.address().port;
   base = 'http://127.0.0.1:' + port; wsBase = 'ws://127.0.0.1:' + port;
@@ -59,10 +97,16 @@ const ok = (name) => { passed++; console.log('  ok  ' + name); };
   assert.equal(r.status, 403); ok('unapproved protector cannot go available');
   r = await api('/admin/users', caller);
   assert.equal(r.status, 403); ok('caller cannot use admin API');
+  r = await api('/alerts', caller, {}); assert.equal(r.status, 403); assert.equal(r.body.code, 'email_unverified'); ok('unconfirmed email cannot send alerts');
+  r = await api('/resend-verification', caller, {}); assert.equal(r.status, 429); ok('confirmation email can be resent only once a minute');
 
   // --- admin vetting
   r = await api('/login', null, { email: 'admin@sfe.local', password: 'test-admin-pass' });
   const admin = r.body.token;
+  r = await api('/admin/users/' + pabloId + '/approve', admin, {});
+  assert.equal(r.status, 400); assert.match(r.body.error, /confirmed their email/); ok('protector cannot be approved before confirming email');
+  for (const e of ['ana@x.com', 'pablo@x.com', 'marta@x.com']) assert.ok((await verifyEmail(e)).includes('verified=1'));
+  assert.ok((await verifyEmail('ana@x.com')).includes('verified=0')); ok('confirmation links work once');
   r = await api('/admin/users/' + pabloId + '/approve', admin, {});
   assert.equal(r.status, 400); ok('approval blocked until all five checks are done');
   for (const id of [pabloId, martaId]) {
@@ -143,6 +187,38 @@ const ok = (name) => { passed++; console.log('  ok  ' + name); };
     else { assert.equal(x.status, 200); await api('/alerts/' + x.body.alertId + '/end', caller, {}); }
   }
   assert.ok(capped); ok('hourly alert cap enforced');
+
+  // --- forgot / reset password
+  r = await api('/signup', null, { name: 'Reset Me', email: 'reset@x.com', password: 'oldpassword1', acceptTerms: true }); const resetTok = r.body.token;
+  const before = mailOutbox.length;
+  r = await api('/forgot', null, { email: 'nobody@x.com' }); assert.equal(r.status, 200); assert.equal(mailOutbox.length, before); ok('forgot password gives the same answer for unknown emails, sends nothing');
+  r = await api('/forgot', null, { email: 'reset@x.com' }); assert.equal(r.status, 200);
+  const rm = mailOutbox.filter((m) => m.type === 'reset' && m.to === 'reset@x.com').pop(); assert.ok(rm);
+  r = await api('/reset', null, { token: rm.token, password: 'short' }); assert.equal(r.status, 400);
+  r = await api('/reset', null, { token: rm.token, password: 'newpassword1' }); assert.equal(r.status, 200);
+  r = await api('/reset', null, { token: rm.token, password: 'another-pass1' }); assert.equal(r.status, 400); ok('reset link works once');
+  r = await api('/me', resetTok); assert.equal(r.status, 401); ok('reset signs out old sessions');
+  r = await api('/login', null, { email: 'reset@x.com', password: 'oldpassword1' }); assert.equal(r.status, 401);
+  r = await api('/login', null, { email: 'reset@x.com', password: 'newpassword1' }); assert.equal(r.status, 200); assert.equal(r.body.user.emailVerified, true); ok('new password works, old one does not');
+
+  // --- Google sign-in
+  r = await fetch(base + '/api/config').then((x) => x.json()); assert.equal(r.googleEnabled, true);
+  await google('bad', 302).then((x) => assert.ok(x.headers.get('location').includes('gerror'))); ok('failed Google exchange sends the user back with an error');
+  const bad = await fetch(base + '/auth/google/callback?code=x&state=nope', { redirect: 'manual' }); assert.equal(bad.status, 400); ok('Google callback with wrong state refused');
+  let g = await google('newuser'); let loc = g.headers.get('location'); assert.ok(loc.startsWith('/#google='));
+  const gtok = loc.split('=')[1];
+  r = await api('/google/pending?token=' + gtok); assert.equal(r.body.email, 'newuser@gmail.test');
+  r = await api('/google/complete', null, { token: gtok, role: 'caller' }); assert.equal(r.status, 400); ok('Google sign-up needs the terms ticked');
+  r = await api('/google/complete', null, { token: gtok, role: 'caller', acceptTerms: true }); assert.equal(r.status, 200); assert.equal(r.body.user.emailVerified, true);
+  const gSession = r.body.token; assert.ok(r.body.user.acceptedTerms.version); ok('Google sign-up creates a confirmed account with terms recorded');
+  g = await google('newuser'); assert.ok(g.headers.get('location').startsWith('/#token=')); ok('returning Google user is signed in');
+  r = await api('/google/complete', null, { token: gtok, role: 'caller', acceptTerms: true }); assert.equal(r.status, 400); ok('Google sign-up link cannot be reused');
+  r = await api('/signup', null, { name: 'Victim', email: 'victim@gmail.test', password: 'attackerpass1', acceptTerms: true }); const atk = r.body.token;
+  g = await google('victim'); assert.ok(g.headers.get('location').startsWith('/#token='));
+  r = await api('/login', null, { email: 'victim@gmail.test', password: 'attackerpass1' }); assert.equal(r.status, 401);
+  r = await api('/me', atk); assert.equal(r.status, 401); ok('Google sign-in takes over an unconfirmed account and removes the old password');
+  r = await api('/me/delete', gSession, { confirmEmail: 'wrong@x.com' }); assert.equal(r.status, 401);
+  r = await api('/me/delete', gSession, { confirmEmail: 'newuser@gmail.test' }); assert.equal(r.status, 200); ok('Google-only account can be deleted by typing its email');
 
   // --- consent, export, delete, retention, legal pages
   r = await api('/signup', null, { name: 'No Exp', email: 'ne@x.com', password: 'password1', role: 'protector', acceptTerms: true, acceptAgreement: true });

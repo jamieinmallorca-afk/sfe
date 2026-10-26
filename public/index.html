@@ -62,7 +62,7 @@ const store = {
 const S = {
   token: store.get('sfe_token'), user: null, config: { iceServers: [], answerSeconds: 30 }, ws: null, wsRetry: 0,
   online: 0, authMode: 'login', authRole: 'caller', error: '', tab: 'apps', admin: {}, incoming: [], call: null,
-  shareLoc: true, note: '', info: '', reset: null, googlePending: null, pc: null, stream: null, muted: false, queued: [], watchId: null, lastLocPost: 0, tick: null, beep: null, loading: true,
+  shareLoc: true, note: '', info: '', reset: null, googlePending: null, langs: [], exps: [], draft: {}, pc: null, stream: null, muted: false, queued: [], watchId: null, lastLocPost: 0, tick: null, beep: null, loading: true,
 };
 
 async function api(path, method, body) {
@@ -230,12 +230,14 @@ const actions = {
     catch (e) { S.error = e.message; }
     render();
   },
+  async toggleLang(el) { const v = el.dataset.v; S.langs = el.checked ? [...new Set([...S.langs, v])] : S.langs.filter((x) => x !== v); },
+  async toggleExp(el) { const v = el.dataset.v; S.exps = el.checked ? [...new Set([...S.exps, v])] : S.exps.filter((x) => x !== v); },
   async cancelGoogle() { S.googlePending = null; S.error = ''; render(); },
   async completeGoogle() {
     const v = (id) => (document.getElementById(id) || {}).value || '';
     S.error = '';
     try {
-      const r = await api('/google/complete', 'POST', { token: S.googlePending.token, name: v('name'), role: S.authRole, languages: v('languages'), country: v('country'), bio: v('bio'), experienceType: v('experienceType'), experienceYears: v('experienceYears'), experienceRef: v('experienceRef'), acceptTerms: !!S.acceptTerms, acceptAgreement: !!S.acceptAgreement });
+      const r = await api('/google/complete', 'POST', { token: S.googlePending.token, name: v('name'), role: S.authRole, languages: S.langs, country: v('country'), bio: v('bio'), experienceType: S.exps, experienceYears: v('experienceYears'), experienceRef: v('experienceRef'), acceptTerms: !!S.acceptTerms, acceptAgreement: !!S.acceptAgreement });
       S.googlePending = null; S.token = r.token; store.set('sfe_token', r.token); await boot();
     } catch (e) { S.error = e.message; render(); }
   },
@@ -245,14 +247,15 @@ const actions = {
     try {
       const body = S.authMode === 'login'
         ? { email: v('email'), password: v('password') }
-        : { name: v('name'), email: v('email'), password: v('password'), role: S.authRole, languages: v('languages'), country: v('country'), bio: v('bio'), experienceType: v('experienceType'), experienceYears: v('experienceYears'), experienceRef: v('experienceRef'), acceptTerms: !!S.acceptTerms, acceptAgreement: !!S.acceptAgreement };
+        : { name: v('name'), email: v('email'), password: v('password'), role: S.authRole, languages: S.langs, country: v('country'), bio: v('bio'), experienceType: S.exps, experienceYears: v('experienceYears'), experienceRef: v('experienceRef'), acceptTerms: !!S.acceptTerms, acceptAgreement: !!S.acceptAgreement };
       const r = await api(S.authMode === 'login' ? '/login' : '/signup', 'POST', body);
-      S.token = r.token; store.set('sfe_token', r.token); await boot();
+      S.token = r.token; store.set('sfe_token', r.token); S.draft = {}; S.langs = []; S.exps = []; await boot();
     } catch (e) { S.error = e.message; render(); }
   },
   async logout() {
     try { await api('/logout', 'POST'); } catch {}
     cleanupMedia(); stopBeep(); if (S.ws) S.ws.close();
+    S.draft = {}; S.langs = []; S.exps = []; S.acceptTerms = false; S.acceptAgreement = false;
     S.token = null; S.user = null; S.call = null; S.incoming = []; store.set('sfe_token', null); render();
   },
   async toggleTerms(el) { S.acceptTerms = el.checked; },
@@ -328,6 +331,10 @@ const actions = {
   /* admin */
   async tab(el) { S.tab = el.dataset.tab; await loadAdmin(); render(); },
   async check(el) { await api('/admin/users/' + el.dataset.id + '/checks', 'POST', { [el.dataset.k]: el.checked }); await loadAdmin(); render(); },
+  async confirmEmail(el) {
+    try { await api('/admin/users/' + el.dataset.id + '/confirm-email', 'POST'); S.error = ''; } catch (e) { S.error = e.message; }
+    await loadAdmin(); render();
+  },
   async adminAct(el) {
     try { await api('/admin/users/' + el.dataset.id + '/' + el.dataset.act, 'POST'); S.error = ''; } catch (e) { S.error = e.message; }
     await loadAdmin(); render();
@@ -353,6 +360,7 @@ async function refreshMe() {
 }
 async function loadAdmin() {
   if (S.tab === 'apps' || S.tab === 'people') S.admin.users = await api('/admin/users?role=protector');
+  if (S.tab === 'callers') S.admin.users = await api('/admin/users?role=caller');
   if (S.tab === 'reports') S.admin.reports = await api('/admin/reports');
   S.admin.stats = await api('/admin/stats');
 }
@@ -389,7 +397,16 @@ function header() {
 const legalLinks = () => `<p class="small mute center" style="margin-top:8px"><a href="/privacy" target="_blank">Privacy</a> · <a href="/terms" target="_blank">Terms</a>${S.user && S.user.role === 'protector' ? ' · <a href="/protector-agreement" target="_blank">Protector Agreement</a>' : ''}${S.config.donateUrl ? ` · <a href="${esc(S.config.donateUrl)}" target="_blank" rel="noopener noreferrer">Support sfe</a>` : ''}${S.user && S.user.role !== 'admin' ? ` · <a href="#" data-action="exportData">Download my data</a> · <a href="#" data-action="deleteAccount">Delete account</a>` : ''}<br>Closed pilot test. Not an emergency service.</p>`;
 const notice112 = `<p class="small mute">sfe supports 112. It does not replace it. In an emergency, call 112 first.</p>` ;
 
-const protFields = () => `<label for="country">Country</label><input id="country"><label for="languages">Languages you speak</label><input id="languages" placeholder="e.g. Spanish, English, German"><label for="experienceType">Relevant experience</label><select id="experienceType"><option value="">Choose…</option><option>Police / Guardia Civil</option><option>Military</option><option>Firefighter</option><option>Paramedic / ambulance</option><option>Other emergency service</option><option>Crisis line / social work</option><option>Other</option></select><label for="experienceYears">Years of experience</label><input id="experienceYears" inputmode="numeric"><label for="experienceRef">Someone who can confirm it (name and phone or email)</label><input id="experienceRef"><label for="bio">Why do you want to help? Any relevant training?</label><textarea id="bio"></textarea><p class="small mute">New protectors are vetted before they can take calls: ID check, a written criminal-record declaration, references, proof of relevant emergency-services, military or similar experience, and a short training.</p>`;
+const LANG_OPTIONS = ['English', 'Spanish', 'Catalan', 'German', 'French', 'Italian'];
+const EXP_OPTIONS = ['Police / Guardia Civil', 'Military', 'Firefighter', 'Paramedic / ambulance', 'Other emergency service', 'Crisis line / social work', 'Other'];
+const tick = (action, list, v) => `<label class="check"><input type="checkbox" data-action="${action}" data-v="${esc(v)}" ${list.includes(v) ? 'checked' : ''}> ${esc(v)}</label>`;
+const protFields = () => `<label for="country">Country</label><input id="country">
+  <label>Languages you speak (tick all that apply)</label>${LANG_OPTIONS.map((v) => tick('toggleLang', S.langs, v)).join('')}
+  <label>Relevant experience (tick all that apply)</label>${EXP_OPTIONS.map((v) => tick('toggleExp', S.exps, v)).join('')}
+  <label for="experienceYears">Years of experience</label><input id="experienceYears" inputmode="numeric">
+  <label for="experienceRef">Someone who can confirm it (name and phone or email)</label><input id="experienceRef">
+  <label for="bio">Why do you want to help? Any relevant training?</label><textarea id="bio"></textarea>
+  <p class="small mute">New protectors are vetted before they can take calls: ID check, a written criminal-record declaration, references, proof of relevant emergency-services, military or similar experience, and a short training.</p>`;
 const consentBoxes = (prot) => `<label class="check"><input type="checkbox" data-action="toggleTerms" ${S.acceptTerms ? 'checked' : ''}> <span class="small">I am 18 or over and accept the <a href="/terms" target="_blank">Terms of Use</a> and <a href="/privacy" target="_blank">Privacy Notice</a>.</span></label>${prot ? `<label class="check"><input type="checkbox" data-action="toggleAgree" ${S.acceptAgreement ? 'checked' : ''}> <span class="small">I accept the <a href="/protector-agreement" target="_blank">Protector Agreement</a>, including the criminal-record declaration.</span></label>` : ''}`;
 const infoBox = () => (S.info ? `<p class="small" style="color:var(--ok,#1a7f4b);margin:8px 0">${esc(S.info)}</p>` : '');
 const googleBtn = () => (S.config.googleEnabled ? `<div class="center small mute" style="margin:12px 0 4px">or</div><a class="btn ghost" style="width:100%" href="/auth/google">Continue with Google</a>` : '');
@@ -531,15 +548,17 @@ function protectorHomeInner() {
 
 function adminView() {
   const st = S.admin.stats || {};
-  const tabs = [['apps', 'Applications'], ['people', 'Protectors'], ['reports', 'Reports (' + (st.openReports || 0) + ')'], ['stats', 'Pilot metrics']];
+  const tabs = [['apps', 'Applications'], ['people', 'Protectors'], ['callers', 'Callers'], ['reports', 'Reports (' + (st.openReports || 0) + ')'], ['stats', 'Pilot metrics']];
   const users = S.admin.users || [];
   const chk = (u, k, label) => `<label class="check"><input type="checkbox" data-action="check" data-id="${esc(u.id)}" data-k="${k}" ${u.checks && u.checks[k] ? 'checked' : ''}> ${label}</label>`;
   let body = '';
   if (S.tab === 'apps') {
     const pend = users.filter((u) => u.status === 'pending');
-    body = (S.error ? `<div class="err">${esc(S.error)}</div>` : '') + (pend.length ? pend.map((u) => `<div class="card"><h2>${esc(u.name)}</h2><p class="small mute">${esc(u.email)} ${u.emailVerified ? '✅ confirmed' : '⚠ not confirmed'} · ${esc(u.country)} · ${esc(u.languages)}</p><p class="small mute">Agreement accepted: ${u.acceptedAgreement ? new Date(u.acceptedAgreement.at).toLocaleString() + ' (' + esc(u.acceptedAgreement.version) + ')' : 'not recorded'}</p><p class="small"><b>Experience:</b> ${esc(u.experienceType)}${u.experienceYears ? ', ' + esc(u.experienceYears) + ' yrs' : ''} · Ref: ${esc(u.experienceRef)}</p><p class="small">${esc(u.bio)}</p>
+    body = (S.error ? `<div class="err">${esc(S.error)}</div>` : '') + (pend.length ? pend.map((u) => `<div class="card"><h2>${esc(u.name)}</h2><p class="small mute">${esc(u.email)} ${u.emailVerified ? '✅ confirmed' : '⚠ not confirmed <button class="small" data-action="confirmEmail" data-id="' + esc(u.id) + '">Mark confirmed</button>'} · ${esc(u.country)} · ${esc(u.languages)}</p><p class="small mute">Agreement accepted: ${u.acceptedAgreement ? new Date(u.acceptedAgreement.at).toLocaleString() + ' (' + esc(u.acceptedAgreement.version) + ')' : 'not recorded'}</p><p class="small"><b>Experience:</b> ${esc(u.experienceType)}${u.experienceYears ? ', ' + esc(u.experienceYears) + ' yrs' : ''} · Ref: ${esc(u.experienceRef)}</p><p class="small">${esc(u.bio)}</p>
       ${chk(u, 'id', 'Identity verified')}${chk(u, 'record', 'Criminal-record declaration checked')}${chk(u, 'references', 'Two references checked')}${chk(u, 'experience', 'Relevant experience verified')}${chk(u, 'training', 'Training completed')}
       <div class="row" style="margin-top:10px"><button data-action="adminAct" data-act="approve" data-id="${esc(u.id)}">Approve</button><button class="ghost" data-action="adminAct" data-act="reject" data-id="${esc(u.id)}">Reject</button></div></div>`).join('') : '<div class="card mute">No applications waiting.</div>');
+  } else if (S.tab === 'callers') {
+    body = (S.error ? `<div class="err">${esc(S.error)}</div>` : '') + `<div class="card"><table><tr><th>Name</th><th>Email</th><th>Status</th><th></th></tr>${users.map((u) => `<tr><td>${esc(u.name)}</td><td class="small">${esc(u.email)}</td><td>${u.emailVerified ? '✅ confirmed' : '⚠ not confirmed'} · ${esc(u.status)}</td><td>${u.emailVerified ? '' : `<button class="small" data-action="confirmEmail" data-id="${esc(u.id)}">Mark email confirmed</button>`}</td></tr>`).join('') || '<tr><td colspan="4" class="mute">No callers yet.</td></tr>'}</table></div>`;
   } else if (S.tab === 'people') {
     body = `<div class="card"><table><tr><th>Name</th><th>Status</th><th>Rating</th><th></th></tr>${users.filter((u) => u.status !== 'pending').map((u) => `<tr><td>${esc(u.name)}<br><span class="small mute">${esc(u.email)}</span></td><td>${esc(u.status)}${u.online ? ' · online' : ''}</td><td>${u.rating == null ? '–' : u.rating + ' (' + u.ratingCount + ')'}</td><td>${u.status === 'suspended' || u.status === 'rejected' ? `<button class="small ghost" data-action="adminAct" data-act="reinstate" data-id="${esc(u.id)}">Reinstate</button>` : `<button class="small danger" data-action="adminAct" data-act="suspend" data-id="${esc(u.id)}">Suspend</button>`}</td></tr>`).join('')}</table></div>`;
   } else if (S.tab === 'reports') {
@@ -562,7 +581,9 @@ function render() {
   else if (S.user.role === 'admin') html = adminView();
   else if (S.user.role === 'protector') html = protectorHome();
   else html = callerHome();
+  document.querySelectorAll('#app input[id], #app textarea[id]').forEach((el) => { if (/^(name|email|country|experienceYears|experienceRef|bio)$/.test(el.id) && el.type !== 'checkbox') S.draft[el.id] = el.value; });
   $app.innerHTML = html + (S.call && S.call.phase !== 'after' ? '' : legalLinks() + '<div class="legal-pad"></div>');
+  for (const [k, v] of Object.entries(S.draft)) { const el = document.getElementById(k); if (el && !el.value) el.value = v; }
   if (keep) { const el = document.getElementById(keep.id); if (el) { el.value = keep.v; el.focus(); try { el.setSelectionRange(keep.s, keep.s); } catch {} } }
 }
 

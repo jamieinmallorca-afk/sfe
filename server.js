@@ -9,6 +9,10 @@ const { WebSocketServer } = require('ws');
 const bcrypt = require('bcryptjs');
 const { marked } = require('marked');
 const LEGAL_VERSION = '2026-10-pilot-3';
+const LANGS = ['English', 'Spanish', 'Catalan', 'German', 'French', 'Italian'];
+const EXPERIENCE = ['Police / Guardia Civil', 'Military', 'Firefighter', 'Paramedic / ambulance', 'Other emergency service', 'Crisis line / social work', 'Other'];
+// accepts an array or a comma-separated string, keeps only allowed values
+const pickList = (v, allowed) => [...new Set((Array.isArray(v) ? v : String(v || '').split(',')).map((x) => String(x).trim()).filter((x) => allowed.includes(x)))].join(', ');
 const CHECKS = ['id', 'record', 'references', 'experience', 'training'];
 
 const PORT = Number(process.env.PORT || 3000);
@@ -102,8 +106,11 @@ const cookiesOf = (req) => Object.fromEntries((req.headers.cookie || '').split('
 
 // Validates role-specific sign-up fields and builds a user. Used by password and Google sign-up.
 function buildUser(body, { name, email, passHash, role, verified, googleSub }) {
-  if (role === 'protector' && (!clean(body.experienceType, 80) || !clean(body.experienceRef, 200)))
-    return { error: 'Protectors must give their relevant experience and a reference who can confirm it' };
+  const exp = role === 'protector' ? pickList(body.experienceType, EXPERIENCE) : '';
+  const langs = role === 'protector' ? pickList(body.languages, LANGS) : '';
+  if (role === 'protector' && (!exp || !clean(body.experienceRef, 200)))
+    return { error: 'Protectors must tick their relevant experience and give a reference who can confirm it' };
+  if (role === 'protector' && !langs) return { error: 'Please tick at least one language you speak' };
   if (body.acceptTerms !== true) return { error: 'Please confirm you are 18 or over and accept the Terms of Use and Privacy Notice' };
   if (role === 'protector' && body.acceptAgreement !== true) return { error: 'Please accept the Protector Agreement' };
   const u = {
@@ -116,9 +123,9 @@ function buildUser(body, { name, email, passHash, role, verified, googleSub }) {
   if (role === 'protector') {
     u.acceptedAgreement = { at: now(), version: LEGAL_VERSION };
     Object.assign(u, {
-      languages: clean(body.languages, 100), bio: clean(body.bio, 500), country: clean(body.country, 60),
+      languages: langs, bio: clean(body.bio, 500), country: clean(body.country, 60),
       available: false, checks: { id: false, record: false, references: false, experience: false, training: false }, ratingSum: 0, ratingCount: 0,
-      experienceType: clean(body.experienceType, 80), experienceYears: clean(body.experienceYears, 10), experienceRef: clean(body.experienceRef, 200),
+      experienceType: exp, experienceYears: clean(body.experienceYears, 10), experienceRef: clean(body.experienceRef, 200),
     });
   }
   return { user: u };
@@ -540,6 +547,14 @@ app.post('/api/admin/users/:id/checks', auth, need('admin'), (req, res) => {
   u.checks = u.checks || {};
   for (const k of CHECKS) if (k in req.body) u.checks[k] = !!req.body[k];
   save();
+  res.json(publicUser(u));
+});
+// pilot helper: lets the admin mark an email as confirmed when mail cannot be delivered yet (no verified sending domain)
+app.post('/api/admin/users/:id/confirm-email', auth, need('admin'), (req, res) => {
+  const u = userById(req.params.id);
+  if (!u || u.role === 'admin') return res.status(404).json({ error: 'Not found' });
+  u.emailVerified = true; save();
+  console.log('admin confirmed email for user', u.id);
   res.json(publicUser(u));
 });
 app.post('/api/admin/users/:id/:action', auth, need('admin'), (req, res) => {

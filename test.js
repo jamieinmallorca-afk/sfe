@@ -87,10 +87,10 @@ const google = async (code, expectStatus = 302) => {
   assert.equal(r.status, 409); ok('duplicate email rejected');
   r = await api('/signup', null, { name: 'Bad', email: 'bad@x.com', password: 'short', acceptTerms: true });
   assert.equal(r.status, 400); ok('short password rejected');
-  r = await api('/signup', null, { name: 'Pablo Protector', email: 'pablo@x.com', password: 'password1', role: 'protector', languages: 'es,en', acceptTerms: true, acceptAgreement: true, experienceType: 'Firefighter', experienceYears: '10', experienceRef: 'Chief X 600000000' });
+  r = await api('/signup', null, { name: 'Pablo Protector', email: 'pablo@x.com', password: 'password1', role: 'protector', languages: ['Spanish', 'English', 'Klingon'], acceptTerms: true, acceptAgreement: true, experienceType: 'Firefighter', experienceYears: '10', experienceRef: 'Chief X 600000000' });
   const pabloTok = r.body.token, pabloId = r.body.user.id;
   assert.equal(r.body.user.status, 'pending'); ok('protector starts as pending');
-  r = await api('/signup', null, { name: 'Marta Protector', email: 'marta@x.com', password: 'password1', role: 'protector', acceptTerms: true, acceptAgreement: true, experienceType: 'Firefighter', experienceYears: '10', experienceRef: 'Chief X 600000000' });
+  r = await api('/signup', null, { name: 'Marta Protector', email: 'marta@x.com', password: 'password1', role: 'protector', languages: ['English'], acceptTerms: true, acceptAgreement: true, experienceType: 'Firefighter', experienceYears: '10', experienceRef: 'Chief X 600000000' });
   const martaTok = r.body.token, martaId = r.body.user.id;
 
   r = await api('/protector/available', pabloTok, { available: true });
@@ -103,6 +103,12 @@ const google = async (code, expectStatus = 302) => {
   // --- admin vetting
   r = await api('/login', null, { email: 'admin@sfe.local', password: 'test-admin-pass' });
   const admin = r.body.token;
+  r = await api('/signup', null, { name: 'Conf Caller', email: 'conf@x.com', password: 'password1', role: 'caller', acceptTerms: true });
+  const confTok = r.body.token, confId = r.body.user.id;
+  r = await api('/alerts', confTok, {}); assert.equal(r.status, 403);
+  r = await api('/admin/users/' + confId + '/confirm-email', confTok, {}); assert.equal(r.status, 403);
+  r = await api('/admin/users/' + confId + '/confirm-email', admin, {}); assert.equal(r.status, 200); assert.equal(r.body.emailVerified, true);
+  r = await api('/me', confTok); assert.equal(r.body.user.emailVerified, true); ok('admin can mark an email confirmed; only admin can');
   r = await api('/admin/users/' + pabloId + '/approve', admin, {});
   assert.equal(r.status, 400); assert.match(r.body.error, /confirmed their email/); ok('protector cannot be approved before confirming email');
   for (const e of ['ana@x.com', 'pablo@x.com', 'marta@x.com']) assert.ok((await verifyEmail(e)).includes('verified=1'));
@@ -220,12 +226,18 @@ const google = async (code, expectStatus = 302) => {
   r = await api('/me/delete', gSession, { confirmEmail: 'wrong@x.com' }); assert.equal(r.status, 401);
   r = await api('/me/delete', gSession, { confirmEmail: 'newuser@gmail.test' }); assert.equal(r.status, 200); ok('Google-only account can be deleted by typing its email');
 
+  // --- protector tick-box fields
+  r = await api('/signup', null, { name: 'Tick Box', email: 'tick@x.com', password: 'password1', role: 'protector', acceptTerms: true, acceptAgreement: true, experienceType: ['Military', 'Firefighter', 'Wizard'], experienceYears: '3', experienceRef: 'Ref', languages: ['German', 'Italian', 'Klingon'] });
+  assert.equal(r.status, 200); assert.equal(r.body.user.languages, 'German, Italian'); assert.equal(r.body.user.experienceType, 'Military, Firefighter'); ok('protector ticks several languages and experiences; unknown values are dropped');
+  r = await api('/signup', null, { name: 'No Lang', email: 'nl@x.com', password: 'password1', role: 'protector', acceptTerms: true, acceptAgreement: true, experienceType: ['Military'], experienceRef: 'Ref', languages: [] });
+  assert.equal(r.status, 400); assert.match(r.body.error, /language/); ok('protector must tick at least one language');
+
   // --- consent, export, delete, retention, legal pages
-  r = await api('/signup', null, { name: 'No Exp', email: 'ne@x.com', password: 'password1', role: 'protector', acceptTerms: true, acceptAgreement: true });
+  r = await api('/signup', null, { name: 'No Exp', email: 'ne@x.com', password: 'password1', role: 'protector', languages: ['English'], acceptTerms: true, acceptAgreement: true });
   assert.equal(r.status, 400); ok('protector sign-up refused without experience details');
   r = await api('/signup', null, { name: 'No Consent', email: 'nc@x.com', password: 'password1' });
   assert.equal(r.status, 400); ok('sign-up refused without accepting terms');
-  r = await api('/signup', null, { name: 'No Agree', email: 'na@x.com', password: 'password1', role: 'protector', acceptTerms: true });
+  r = await api('/signup', null, { name: 'No Agree', email: 'na@x.com', password: 'password1', role: 'protector', languages: ['English'], acceptTerms: true });
   assert.equal(r.status, 400); ok('protector sign-up refused without accepting the agreement');
   r = await api('/admin/users', admin);
   assert.ok(r.body.find((u) => u.id === pabloId).acceptedAgreement.version); ok('agreement acceptance (time + version) visible to admin');
